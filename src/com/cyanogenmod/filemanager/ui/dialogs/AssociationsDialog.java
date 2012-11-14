@@ -315,7 +315,8 @@ public class AssociationsDialog implements OnItemClickListener {
         int cc = adapter.getCount();
         for (int i = 0; i < cc; i++) {
             ViewGroup item = (ViewGroup)this.mGrid.getChildAt(i);
-            item.setSelected(false);
+            if (item != null)
+            	item.setSelected(false);
         }
     }
 
