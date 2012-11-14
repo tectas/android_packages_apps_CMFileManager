@@ -49,7 +49,7 @@ public class SimpleMenuListAdapter extends BaseAdapter {
     public SimpleMenuListAdapter(Context context, int menuResourceId) {
         super();
         this.mContext = context;
-        this.mMenu = new MenuBuilder(context);
+        this.mMenu = MenuBuilder(context);
         this.mInflater = (LayoutInflater)context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
         inflateMenu(menuResourceId);
     }
