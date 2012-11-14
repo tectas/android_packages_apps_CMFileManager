@@ -212,12 +212,17 @@ public class SettingsPreferences extends PreferenceActivity {
 
                     String value = (String)newValue;
                     AccessMode oldMode = FileManagerApplication.getAccessMode();
+                    Log.e(TAG, oldMode.toString());
                     AccessMode newMode = AccessMode.fromId(value);
+                    Log.e(TAG, value);
                     if (oldMode.compareTo(newMode) != 0) {
                         // The mode was changes. Change the console
                         if (newMode.compareTo(AccessMode.ROOT) == 0) {
-                            if (!ConsoleBuilder.changeToPrivilegedConsole(
-                                    activity.getApplicationContext())) {
+                        	Boolean privileg = ConsoleBuilder.changeToPrivilegedConsole(
+                                    activity.getApplicationContext());
+                        	
+                        	Log.e(TAG, privileg.toString());
+                            if (!privileg) {
                                 value = String.valueOf(oldMode.ordinal());
                                 ret = false;
                             }

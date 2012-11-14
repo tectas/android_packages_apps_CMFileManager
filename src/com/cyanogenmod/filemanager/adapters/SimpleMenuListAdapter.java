@@ -25,8 +25,8 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.TextView;
-
 import com.android.internal.view.menu.MenuBuilder;
+
 import com.cyanogenmod.filemanager.R;
 import com.cyanogenmod.filemanager.ui.ThemeManager;
 import com.cyanogenmod.filemanager.ui.ThemeManager.Theme;
@@ -49,12 +49,12 @@ public class SimpleMenuListAdapter extends BaseAdapter {
     public SimpleMenuListAdapter(Context context, int menuResourceId) {
         super();
         this.mContext = context;
-        this.mMenu = MenuBuilder(context);
         this.mInflater = (LayoutInflater)context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+        this.mMenu = new MenuBuilder(context);
         inflateMenu(menuResourceId);
     }
 
-    /**
+	/**
      * Constructor of <code>SimpleMenuListAdapter</code><br/>
      * <br/>.
      * This constructors uses only the menus of the group passed

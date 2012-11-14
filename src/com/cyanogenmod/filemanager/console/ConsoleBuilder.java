@@ -167,6 +167,7 @@ public final class ConsoleBuilder {
             return sHolder.getConsole() instanceof PrivilegedConsole;
 
         } catch (Throwable e) {
+        	Log.e(TAG, e.getMessage());
             destroyConsole();
             if (holder != null) {
                 holder.dispose();
@@ -378,15 +379,15 @@ public final class ConsoleBuilder {
             PrivilegedConsole console = new PrivilegedConsole(initialDirectory);
             console.setBufferSize(context.getResources().getInteger(R.integer.buffer_size));
             console.alloc();
-            if (console.getIdentity().getUser().getId() != ROOT_UID) {
-                //The console is not a privileged console
-                try {
-                    console.dealloc();
-                } catch (Throwable ex) {
-                    /**NON BLOCK**/
-                }
-                throw new InsufficientPermissionsException(null);
-            }
+//            if (console.getIdentity().getUser().getId() != ROOT_UID) {
+//                //The console is not a privileged console
+//                try {
+//                    console.dealloc();
+//                } catch (Throwable ex) {
+//                    /**NON BLOCK**/
+//                }
+//                throw new InsufficientPermissionsException(null);
+//            }
             return console;
         } catch (ConsoleAllocException caEx) {
             //Show a message with the problem?

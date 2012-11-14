@@ -272,7 +272,7 @@ public abstract class ShellConsole extends Console implements Program.ProgramLis
             createStdErrThread(this.mErr);
 
             //Wait for thread start
-            Thread.sleep(50L);
+            Thread.sleep(5000L);
 
             //Check if process its active
             checkIfProcessExits();
@@ -303,8 +303,8 @@ public abstract class ShellConsole extends Console implements Program.ProgramLis
                 //Try with groups
                 GroupsExecutable groupsCmd =
                         getExecutableFactory().newCreator().createGroupsExecutable();
-                execute(groupsCmd);
-                this.mIdentity.setGroups(groupsCmd.getResult());
+                //execute(groupsCmd);
+                //this.mIdentity.setGroups(groupsCmd.getResult());
             }
 
         } catch (Exception ex) {
@@ -351,8 +351,15 @@ public abstract class ShellConsole extends Console implements Program.ProgramLis
                     /**NON BLOCK**/
                 }
                 try {
-                    this.mProc.destroy();
-                } catch (Throwable e) {/**NON BLOCK**/}
+                    if (mProc != null) {
+
+                    	mProc.exitValue();
+                    }
+                } catch (IllegalThreadStateException e) {
+
+                	mProc.destroy();
+                }
+                
                 this.mIn = null;
                 this.mErr = null;
                 this.mOut = null;
