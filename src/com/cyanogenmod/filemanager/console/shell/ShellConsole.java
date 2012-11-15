@@ -272,14 +272,18 @@ public abstract class ShellConsole extends Console implements Program.ProgramLis
             createStdErrThread(this.mErr);
 
             //Wait for thread start
-            Thread.sleep(5000L);
-
-            //Check if process its active
-            checkIfProcessExits();
-            synchronized (this.mSync) {
-                if (!this.mActive) {
-                    throw new ConsoleAllocException("Shell not started."); //$NON-NLS-1$
-                }
+            for (int i = 0; i <= 100; i++) {
+        		Thread.sleep(50L);
+        		checkIfProcessExits();
+        		
+            	synchronized (this.mSync) {
+            		if (this.mActive) {
+            			break;
+            		}
+            		else if (i == 100) {
+            			throw new ConsoleAllocException("Shell not started.");
+            		}
+            	}
             }
 
             // Retrieve the PID of the shell
