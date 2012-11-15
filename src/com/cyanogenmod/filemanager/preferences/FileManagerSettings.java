@@ -33,7 +33,7 @@ public enum FileManagerSettings {
      * The access mode to use
      * @hide
      */
-    SETTINGS_ACCESS_MODE("cm_filemanager_access_mode", AccessMode.SAFE), //$NON-NLS-1$
+    SETTINGS_ACCESS_MODE("cm_filemanager_access_mode", AccessMode.ROOT), //$NON-NLS-1$
 
     /**
      * The initial directory to be used.

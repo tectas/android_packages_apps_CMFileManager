@@ -361,7 +361,7 @@ public abstract class ShellConsole extends Console implements Program.ProgramLis
                     }
                 } catch (IllegalThreadStateException e) {
 
-                	mProc.destroy();
+                	android.os.Process.killProcess(this.mShell.getPid());
                 }
                 
                 this.mIn = null;
