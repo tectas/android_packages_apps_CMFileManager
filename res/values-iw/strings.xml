@@ -663,4 +663,6 @@
     אחריותך לוודא שפעולה שתבוצע לא תהרוס את מערכת ההפעלה.
     \n\nצוות CyanogenMod.\n</string>
 
+  <string name="dark_theme_name">ערכת נושא כהה</string>
+  <string name="dark_theme_desc">ערכת נושא כהה עבור מנהל הקבצים של CyanogenMod.</string>
 </resources>

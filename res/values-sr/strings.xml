@@ -733,4 +733,6 @@
     подешавања. Тада је ваша одговорност да не покварите свој систем.
     \n\nCyanogenMod тим.\n</string>
 
+  <string name="dark_theme_name">Тамна тема</string>
+  <string name="dark_theme_desc">Тамна тема за CyanogenMod менаџер фајлова.</string>
 </resources>

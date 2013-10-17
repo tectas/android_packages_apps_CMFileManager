@@ -423,4 +423,8 @@
   <string name="filetime_format_mode_ddMMyyyy_HHmmss">dd/mm/rrrr gg:mm:ss</string>
   <string name="filetime_format_mode_MMddyyyy_HHmmss">mm/dd/rrrr gg:mm:ss</string>
   <string name="filetime_format_mode_yyyyMMdd_HHmmss">rrrr-mm-dd gg:mm:ss</string>
+  
+  
+  <string name="dark_theme_name">Ciemny motyw</string>
+  <string name="dark_theme_desc">Ciemny motyw dla Menedżera plików CyanogenMod.</string>
 </resources>

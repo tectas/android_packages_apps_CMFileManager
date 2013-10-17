@@ -759,4 +759,7 @@
     そのため、意図せず壊してしまわないように権限の低いセーフモードで起動します。
     \n\n設定により、フルアクセス可能な上級モードで利用することもできますが、システムを壊さないように注意深く操作して下さい。
     \n\nCyanogenModチームより。\n</string>
+    
+  <string name="dark_theme_name">ダークテーマ</string>
+  <string name="dark_theme_desc">CyanogenModファイルマネージャのダークテーマ</string>
 </resources>

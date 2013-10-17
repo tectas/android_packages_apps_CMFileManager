@@ -780,4 +780,6 @@
     que uma operação não afecte a estabilidade do seu sistema.
     \n\nA Equipa CyanogenMod.\n</string>
 
+  <string name="dark_theme_name">Tema escuro</string>
+  <string name="dark_theme_desc">Um tema escuro para o Gestor de Ficheiros CyanogenMod.</string>
 </resources>

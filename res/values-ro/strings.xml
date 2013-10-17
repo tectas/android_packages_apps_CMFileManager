@@ -286,5 +286,8 @@
   <string name="theme_default_name">Temă \"deschisă\"</string>
   <string name="theme_default_description">Temă \"deschisă\" pentru Managerul de Fişiere CyanogenMod.</string>
   <string name="security_warning_extract">Avertizare!\n\nExtragerea unui fişier arhivă cu căi relative sau absolute poate cauza defecţiuni dispozitivului Dvs. prin suprascrierea fişierelor de sistem.\n\nDoriţi să continuaţi?</string>
+  
+  <string name="dark_theme_name">Temă \"întunecată\"</string>
+  <string name="dark_theme_desc">Temă \"întunecată\" pentru Managerul de Fișiere CyanogenMod.</string>
   </resources>
 
