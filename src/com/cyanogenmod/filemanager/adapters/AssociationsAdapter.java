@@ -22,6 +22,7 @@ import android.graphics.drawable.Drawable;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
 import android.widget.ArrayAdapter;
 import android.widget.ImageView;
@@ -72,6 +73,7 @@ public class AssociationsAdapter
 
 
     private DataHolder[] mData;
+    private AdapterView<?> mParent;
     private final OnItemClickListener mOnItemClickListener;
 
     //The resource item layout
@@ -86,16 +88,19 @@ public class AssociationsAdapter
      * Constructor of <code>AssociationsAdapter</code>.
      *
      * @param context The current context
+     * @param parent The adapter view
      * @param intents The intents info
      * @param onItemClickListener The listener for listen action clicks
      */
     public AssociationsAdapter(
-            Context context, List<ResolveInfo> intents, OnItemClickListener onItemClickListener) {
+            Context context, AdapterView<?> parent,
+            List<ResolveInfo> intents, OnItemClickListener onItemClickListener) {
         super(context, RESOURCE_ITEM_NAME, intents);
         this.mOnItemClickListener = onItemClickListener;
+        this.mParent = parent;
 
         //Do cache of the data for better performance
-        processData();
+        processData(intents);
     }
 
     /**
@@ -103,7 +108,7 @@ public class AssociationsAdapter
      */
     @Override
     public void notifyDataSetChanged() {
-        processData();
+        processData(null);
         super.notifyDataSetChanged();
     }
 
@@ -117,13 +122,15 @@ public class AssociationsAdapter
 
     /**
      * Method that process the data before use {@link #getView} method.
+     *
+     * @param intents The list of intents (to better performance) or null.
      */
-    private void processData() {
+    private void processData(List<ResolveInfo> intents) {
         this.mData = new DataHolder[getCount()];
-        int cc = getCount();
+        int cc = (intents == null) ? getCount() : intents.size();
         for (int i = 0; i < cc; i++) {
             //Intent info
-            ResolveInfo intentInfo = getItem(i);
+            ResolveInfo intentInfo = (intents == null) ? getItem(i) : intents.get(i);
 
             //Build the data holder
             this.mData[i] = new AssociationsAdapter.DataHolder();
@@ -180,7 +187,7 @@ public class AssociationsAdapter
     @Override
     public void onClick(View v) {
         ViewHolder viewHolder = (ViewHolder)v.getTag();
-        this.mOnItemClickListener.onItemClick(null, v, viewHolder.mPosition, v.getId());
+        this.mOnItemClickListener.onItemClick(this.mParent, v, viewHolder.mPosition, v.getId());
     }
 
 }

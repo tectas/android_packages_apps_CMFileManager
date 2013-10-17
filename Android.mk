@@ -18,11 +18,16 @@ LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES := $(call all-subdir-java-files)
+LOCAL_SRC_FILES += $(call all-java-files-under, themes/src)
+LOCAL_SRC_FILES += $(call all-java-files-under, libs/android-syntax-highlight/src)
+LOCAL_SRC_FILES += $(call all-java-files-under, libs/color-picker-view/src)
+LOCAL_RESOURCE_DIR := $(addprefix $(LOCAL_PATH)/, themes/res res)
+LOCAL_AAPT_INCLUDE_ALL_RESOURCES := true
+LOCAL_AAPT_FLAGS := --auto-add-overlay
 
 LOCAL_PACKAGE_NAME := CMFileManager
 LOCAL_CERTIFICATE := platform
 LOCAL_PROGUARD_FLAG_FILES := proguard.flags
-LOCAL_AAPT_INCLUDE_ALL_RESOURCES := true
 
 include $(BUILD_PACKAGE)
 

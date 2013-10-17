@@ -104,11 +104,11 @@ public class BookmarksAdapter extends ArrayAdapter<Bookmark> {
     public BookmarksAdapter(
             Context context, List<Bookmark> bookmarks, OnClickListener onActionClickListener) {
         super(context, RESOURCE_ITEM_NAME, bookmarks);
-        this.mIconHolder = new IconHolder();
+        this.mIconHolder = new IconHolder(context, false);
         this.mOnActionClickListener = onActionClickListener;
 
         //Do cache of the data for better performance
-        processData();
+        processData(bookmarks);
     }
 
     /**
@@ -116,7 +116,7 @@ public class BookmarksAdapter extends ArrayAdapter<Bookmark> {
      */
     @Override
     public void notifyDataSetChanged() {
-        processData();
+        processData(null);
         super.notifyDataSetChanged();
     }
 
@@ -126,37 +126,40 @@ public class BookmarksAdapter extends ArrayAdapter<Bookmark> {
     public void dispose() {
         clear();
         this.mData = null;
-        this.mIconHolder = null;
+        if (mIconHolder != null) {
+            mIconHolder.cleanup();
+            mIconHolder = null;
+        }
     }
 
     /**
      * Method that process the data before use {@link #getView} method.
+     *
+     * @param bookmarks The list of bookmarks (to better performance) or null.
      */
-    private void processData() {
+    private void processData(List<Bookmark> bookmarks) {
         this.mData = new DataHolder[getCount()];
-        int cc = getCount();
+        int cc = (bookmarks == null) ? getCount() : bookmarks.size();
         for (int i = 0; i < cc; i++) {
             //Bookmark info
-            Bookmark bookmark = getItem(i);
+            Bookmark bookmark = (bookmarks == null) ? getItem(i) : bookmarks.get(i);
 
             //Build the data holder
             this.mData[i] = new BookmarksAdapter.DataHolder();
             this.mData[i].mDwIcon =
-                    this.mIconHolder.getDrawable(getContext(), BookmarksHelper.getIcon(bookmark));
+                    this.mIconHolder.getDrawable(BookmarksHelper.getIcon(bookmark));
             this.mData[i].mName = bookmark.mName;
             this.mData[i].mPath = bookmark.mPath;
             this.mData[i].mDwAction = null;
             this.mData[i].mActionCd = null;
             if (bookmark.mType.compareTo(BOOKMARK_TYPE.HOME) == 0) {
                 this.mData[i].mDwAction =
-                        this.mIconHolder.getDrawable(
-                                getContext(), "ic_config_drawable"); //$NON-NLS-1$
+                        this.mIconHolder.getDrawable("ic_config_drawable"); //$NON-NLS-1$
                 this.mData[i].mActionCd =
                         getContext().getString(R.string.bookmarks_button_config_cd);
             } else if (bookmark.mType.compareTo(BOOKMARK_TYPE.USER_DEFINED) == 0) {
                 this.mData[i].mDwAction =
-                        this.mIconHolder.getDrawable(getContext(),
-                                    "ic_close_drawable"); //$NON-NLS-1$
+                        this.mIconHolder.getDrawable("ic_close_drawable"); //$NON-NLS-1$
                 this.mData[i].mActionCd =
                         getContext().getString(R.string.bookmarks_button_remove_bookmark_cd);
             }
@@ -187,7 +190,7 @@ public class BookmarksAdapter extends ArrayAdapter<Bookmark> {
             // Apply the current theme
             Theme theme = ThemeManager.getCurrentTheme(getContext());
             theme.setBackgroundDrawable(
-                    getContext(), v, "background_drawable"); //$NON-NLS-1$
+                    getContext(), v, "selectors_deselected_drawable"); //$NON-NLS-1$
             theme.setTextColor(
                     getContext(), viewHolder.mTvName, "text_color"); //$NON-NLS-1$
             theme.setTextColor(
@@ -218,7 +221,10 @@ public class BookmarksAdapter extends ArrayAdapter<Bookmark> {
      * Method that should be invoked when the theme of the app was changed
      */
     public void notifyThemeChanged() {
+        if (mIconHolder != null) {
+            mIconHolder.cleanup();
+        }
         // Empty icon holder
-        this.mIconHolder = new IconHolder();
+        this.mIconHolder = new IconHolder(getContext(), false);
     }
 }

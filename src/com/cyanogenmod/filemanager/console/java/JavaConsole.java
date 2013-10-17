@@ -17,10 +17,9 @@
 package com.cyanogenmod.filemanager.console.java;
 
 import android.content.Context;
-import android.os.storage.StorageVolume;
+import android.os.Process;
 import android.util.Log;
 
-import com.cyanogenmod.filemanager.commands.ChangeCurrentDirExecutable;
 import com.cyanogenmod.filemanager.commands.Executable;
 import com.cyanogenmod.filemanager.commands.ExecutableFactory;
 import com.cyanogenmod.filemanager.commands.SIGNAL;
@@ -34,8 +33,13 @@ import com.cyanogenmod.filemanager.console.InsufficientPermissionsException;
 import com.cyanogenmod.filemanager.console.NoSuchFileOrDirectory;
 import com.cyanogenmod.filemanager.console.OperationTimeoutException;
 import com.cyanogenmod.filemanager.console.ReadOnlyFilesystemException;
+import com.cyanogenmod.filemanager.model.AID;
+import com.cyanogenmod.filemanager.model.Group;
 import com.cyanogenmod.filemanager.model.Identity;
-import com.cyanogenmod.filemanager.util.StorageHelper;
+import com.cyanogenmod.filemanager.model.User;
+import com.cyanogenmod.filemanager.util.AIDHelper;
+
+import java.util.ArrayList;
 
 /**
  * An implementation of a {@link Console} based on a java implementation.<br/>
@@ -48,7 +52,6 @@ public final class JavaConsole extends Console {
     private static final String TAG = "JavaConsole"; //$NON-NLS-1$
 
     private boolean mActive;
-    private String mCurrentDir;
 
     private final Context mCtx;
     private final int mBufferSize;
@@ -57,14 +60,12 @@ public final class JavaConsole extends Console {
      * Constructor of <code>JavaConsole</code>
      *
      * @param ctx The current context
-     * @param initialDir The initial directory
      * @param bufferSize The buffer size
      */
-    public JavaConsole(Context ctx, String initialDir, int bufferSize) {
+    public JavaConsole(Context ctx, int bufferSize) {
         super();
         this.mCtx = ctx;
         this.mBufferSize = bufferSize;
-        this.mCurrentDir = initialDir;
     }
 
     /**
@@ -76,21 +77,6 @@ public final class JavaConsole extends Console {
             if (isTrace()) {
                 Log.v(TAG, "Allocating Java console"); //$NON-NLS-1$
             }
-
-            //Retrieve the current directory from the first storage volume
-            StorageVolume[] vols = StorageHelper.getStorageVolumes(this.mCtx);
-            if (vols == null || vols.length == 0) {
-                throw new ConsoleAllocException("Can't stat any directory"); //$NON-NLS-1$
-            }
-
-            // Test to change to current directory
-            ChangeCurrentDirExecutable currentDirCmd =
-                    getExecutableFactory().
-                        newCreator().createChangeCurrentDirExecutable(this.mCurrentDir);
-            execute(currentDirCmd);
-
-            // Tested. Is not active
-            this.mCurrentDir = vols[0].getPath();
             this.mActive = true;
         } catch (Exception e) {
             Log.e(TAG, "Failed to allocate Java console", e); //$NON-NLS-1$
@@ -131,7 +117,12 @@ public final class JavaConsole extends Console {
      */
     @Override
     public Identity getIdentity() {
-        return null;
+        AID aid = AIDHelper.getAID(Process.myUid());
+        if (aid == null) return null;
+        return new Identity(
+                new User(aid.getId(), aid.getName()),
+                new Group(aid.getId(), aid.getName()),
+                new ArrayList<Group>());
     }
 
     /**
@@ -148,24 +139,6 @@ public final class JavaConsole extends Console {
     @Override
     public boolean isActive() {
         return this.mActive;
-    }
-
-    /**
-     * Method that returns the current directory of the console
-     *
-     * @return String The current directory
-     */
-    public String getCurrentDir() {
-        return this.mCurrentDir;
-    }
-
-    /**
-     * Method that sets the current directory of the console
-     *
-     * @param currentDir The current directory
-     */
-    public void setCurrentDir(String currentDir) {
-        this.mCurrentDir = currentDir;
     }
 
     /**

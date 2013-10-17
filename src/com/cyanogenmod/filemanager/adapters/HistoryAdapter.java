@@ -98,10 +98,10 @@ public class HistoryAdapter extends ArrayAdapter<History> {
      */
     public HistoryAdapter(Context context, List<History> history) {
         super(context, RESOURCE_ITEM_NAME, history);
-        this.mIconHolder = new IconHolder();
+        notifyThemeChanged(); // Reload icons
 
         //Do cache of the data for better performance
-        processData();
+        processData(history);
     }
 
     /**
@@ -109,7 +109,7 @@ public class HistoryAdapter extends ArrayAdapter<History> {
      */
     @Override
     public void notifyDataSetChanged() {
-        processData();
+        processData(null);
         super.notifyDataSetChanged();
     }
 
@@ -119,29 +119,32 @@ public class HistoryAdapter extends ArrayAdapter<History> {
     public void dispose() {
         clear();
         this.mData = null;
-        this.mIconHolder = null;
+        if (mIconHolder != null) {
+            mIconHolder.cleanup();
+            mIconHolder = null;
+        }
     }
 
     /**
-     * Method that process the data before use {@link #getView} method .
+     * Method that process the data before use {@link #getView} method.
+     *
+     * @param historyData The list of histories (to better performance) or null.
      */
-    private void processData() {
+    private void processData(List<History> historyData) {
         this.mData = new DataHolder[getCount()];
-        int cc = getCount();
+        int cc = (historyData == null) ? getCount() : historyData.size();
         for (int i = 0; i < cc; i++) {
             //History info
-            History history = getItem(i);
+            History history = (historyData == null) ? getItem(i) : historyData.get(i);
 
             //Build the data holder
             this.mData[i] = new HistoryAdapter.DataHolder();
             if (history.getItem() instanceof NavigationViewInfoParcelable) {
                 this.mData[i].mDwIcon =
-                        this.mIconHolder.getDrawable(
-                                getContext(), "ic_fso_folder_drawable"); //$NON-NLS-1$
+                        this.mIconHolder.getDrawable("ic_fso_folder_drawable"); //$NON-NLS-1$
             } else if (history.getItem() instanceof SearchInfoParcelable) {
                 this.mData[i].mDwIcon =
-                        this.mIconHolder.getDrawable(
-                                getContext(), "ic_history_search_drawable"); //$NON-NLS-1$
+                        this.mIconHolder.getDrawable("ic_history_search_drawable"); //$NON-NLS-1$
             }
             this.mData[i].mName = history.getItem().getTitle();
             if (this.mData[i].mName == null || this.mData[i].mName.trim().length() == 0) {
@@ -176,7 +179,7 @@ public class HistoryAdapter extends ArrayAdapter<History> {
             // Apply the current theme
             Theme theme = ThemeManager.getCurrentTheme(getContext());
             theme.setBackgroundDrawable(
-                    getContext(), v, "background_drawable"); //$NON-NLS-1$
+                    getContext(), v, "selectors_deselected_drawable"); //$NON-NLS-1$
             theme.setTextColor(
                     getContext(), viewHolder.mTvName, "text_color"); //$NON-NLS-1$
             theme.setTextColor(
@@ -205,8 +208,11 @@ public class HistoryAdapter extends ArrayAdapter<History> {
      * Method that should be invoked when the theme of the app was changed
      */
     public void notifyThemeChanged() {
-        // Empty icon holder
-        this.mIconHolder = new IconHolder();
+        if (mIconHolder != null) {
+            mIconHolder.cleanup();
+        }
+        // Empty icon holder (only have folders and search icons)
+        this.mIconHolder = new IconHolder(getContext(), false);
     }
 
 }

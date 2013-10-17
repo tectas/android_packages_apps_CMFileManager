@@ -33,8 +33,10 @@ import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
 import android.widget.CompoundButton.OnCheckedChangeListener;
+import android.widget.LinearLayout;
 import android.widget.Spinner;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.cyanogenmod.filemanager.FileManagerApplication;
 import com.cyanogenmod.filemanager.R;
@@ -65,8 +67,10 @@ import com.cyanogenmod.filemanager.util.FileHelper;
 import com.cyanogenmod.filemanager.util.MimeTypeHelper;
 import com.cyanogenmod.filemanager.util.MimeTypeHelper.MimeTypeCategory;
 import com.cyanogenmod.filemanager.util.ResourcesHelper;
+import com.cyanogenmod.filemanager.util.StorageHelper;
 
-import java.text.DateFormat;
+import java.io.File;
+import java.io.IOException;
 
 /**
  * A class that wraps a dialog for showing information about a {@link FileSystemObject}
@@ -88,7 +92,10 @@ public class FsoPropertiesDialog
      * @hide
      */
     final FileSystemObject mFso;
-    private boolean mHasChanged;
+    /**
+     * @hide
+     */
+    boolean mHasChanged;
 
     /**
      * @hide
@@ -103,6 +110,10 @@ public class FsoPropertiesDialog
     /**
      * @hide
      */
+    CheckBox mChkNoMedia;
+    /**
+     * @hide
+     */
     Spinner mSpnOwner;
     /**
      * @hide
@@ -111,7 +122,7 @@ public class FsoPropertiesDialog
     /**
      * @hide
      */
-    CheckBox[] mChkUserPermission;
+    private CheckBox[] mChkUserPermission;
     private CheckBox[] mChkGroupPermission;
     private CheckBox[] mChkOthersPermission;
     private TextView mInfoMsgView;
@@ -124,7 +135,10 @@ public class FsoPropertiesDialog
      */
     TextView mTvContains;
 
-    private boolean mIgnoreCheckEvents;
+    /**
+     * @hide
+     */
+    boolean mIgnoreCheckEvents;
     private boolean mHasPrivileged;
     private final boolean mIsAdvancedMode;
 
@@ -174,7 +188,7 @@ public class FsoPropertiesDialog
                                         this.mContentView);
         this.mDialog.setButton(
                 DialogInterface.BUTTON_NEGATIVE,
-                this.mContext.getString(android.R.string.cancel),
+                this.mContext.getString(android.R.string.ok),
                 (DialogInterface.OnClickListener)null);
         this.mDialog.setOnCancelListener(this);
         this.mDialog.setOnDismissListener(this);
@@ -253,7 +267,13 @@ public class FsoPropertiesDialog
         this.mTvSize = (TextView)contentView.findViewById(R.id.fso_properties_size);
         View vContatinsRow = contentView.findViewById(R.id.fso_properties_contains_row);
         this.mTvContains = (TextView)contentView.findViewById(R.id.fso_properties_contains);
-        TextView tvDate = (TextView)contentView.findViewById(R.id.fso_properties_date);
+        TextView tvLastAccessedTime =
+                (TextView)contentView.findViewById(R.id.fso_properties_last_accessed);
+        TextView tvLastModifiedTime =
+                (TextView)contentView.findViewById(R.id.fso_properties_last_modified);
+        TextView tvLastChangedTime =
+                (TextView)contentView.findViewById(R.id.fso_properties_last_changed);
+        this.mChkNoMedia = (CheckBox)contentView.findViewById(R.id.fso_include_in_media_scan);
         this.mSpnOwner = (Spinner)contentView.findViewById(R.id.fso_properties_owner);
         this.mSpnGroup = (Spinner)contentView.findViewById(R.id.fso_properties_group);
         this.mInfoMsgView = (TextView)contentView.findViewById(R.id.fso_info_msg);
@@ -290,15 +310,17 @@ public class FsoPropertiesDialog
         }
         this.mTvSize.setText(size);
         this.mTvContains.setText("-");  //$NON-NLS-1$
-        DateFormat df = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT);
-        tvDate.setText(df.format(this.mFso.getLastModifiedTime()));
+        tvLastAccessedTime.setText(
+                FileHelper.formatFileTime(this.mContext, this.mFso.getLastAccessedTime()));
+        tvLastModifiedTime.setText(
+                FileHelper.formatFileTime(this.mContext, this.mFso.getLastModifiedTime()));
+        tvLastChangedTime.setText(
+                FileHelper.formatFileTime(this.mContext, this.mFso.getLastChangedTime()));
 
         //- Permissions
         String loadingMsg = this.mContext.getString(R.string.loading_message);
         setSpinnerMsg(this.mContext, FsoPropertiesDialog.this.mSpnOwner, loadingMsg);
         setSpinnerMsg(this.mContext, FsoPropertiesDialog.this.mSpnGroup, loadingMsg);
-        this.mSpnOwner.setOnItemSelectedListener(this);
-        this.mSpnGroup.setOnItemSelectedListener(this);
         updatePermissions();
 
         // Load owners and groups AIDs in background
@@ -333,6 +355,25 @@ public class FsoPropertiesDialog
             this.mInfoMsgView.setOnClickListener(this);
         }
 
+        // Add the listener after set the value to avoid raising triggers
+        this.mSpnOwner.setOnItemSelectedListener(this);
+        this.mSpnGroup.setOnItemSelectedListener(this);
+        setPermissionCheckBoxesListener(this.mChkUserPermission);
+        setPermissionCheckBoxesListener(this.mChkGroupPermission);
+        setPermissionCheckBoxesListener(this.mChkOthersPermission);
+
+        // Check if we should show "Skip media scan" toggle
+        if (!FileHelper.isDirectory(this.mFso) ||
+            !StorageHelper.isPathInStorageVolume(this.mFso.getFullPath())) {
+            LinearLayout fsoSkipMediaScanView =
+                    (LinearLayout)contentView.findViewById(R.id.fso_skip_media_scan_view);
+            fsoSkipMediaScanView.setVisibility(View.GONE);
+        } else {
+            //attach the click events
+            this.mChkNoMedia.setChecked(isNoMediaFilePresent());
+            this.mChkNoMedia.setOnCheckedChangeListener(this);
+        }
+
         //Change the tab
         onClick(this.mInfoViewTab);
         this.mIgnoreCheckEvents = false;
@@ -347,7 +388,7 @@ public class FsoPropertiesDialog
                         new AsyncTask<Void, Void, SparseArray<AID>>() {
             @Override
             protected SparseArray<AID> doInBackground(Void...params) {
-                return AIDHelper.getAIDs(FsoPropertiesDialog.this.mContext);
+                return AIDHelper.getAIDs(FsoPropertiesDialog.this.mContext, true);
             }
 
             @Override
@@ -519,8 +560,45 @@ public class FsoPropertiesDialog
      */
     @Override
     public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
-        if (this.mIgnoreCheckEvents) return;
+        switch (buttonView.getId()) {
+            case R.id.fso_include_in_media_scan:
+                onNoMediaCheckedChanged(buttonView, isChecked);
+                break;
 
+            default:
+                onPermissionsCheckedChanged(buttonView, isChecked);
+                break;
+        }
+    }
+
+    /**
+     * Method that manage a check changed event
+     *
+     * @param buttonView The checkbox
+     * @param isChecked If the checkbox is checked
+     */
+    private void onNoMediaCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+        if (this.mIgnoreCheckEvents) {
+            this.mIgnoreCheckEvents = false;
+            return;
+        }
+        // Checked means "skip media scan"
+        final File nomedia = FileHelper.getNoMediaFile(this.mFso);
+        if (isChecked) {
+            preventMediaScan(nomedia);
+        } else {
+            allowMediaScan(nomedia);
+        }
+    }
+
+    /**
+     * Method that manage a check changed event
+     *
+     * @param buttonView The checkbox
+     * @param isChecked If the checkbox is checked
+     */
+    private void onPermissionsCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+        if (this.mIgnoreCheckEvents) return;
         try {
             // Cancel the folder usage command
             cancelFolderUsageCommand();
@@ -596,7 +674,6 @@ public class FsoPropertiesDialog
                     updatePermissions();
                 }
             });
-
         }
     }
 
@@ -805,7 +882,7 @@ public class FsoPropertiesDialog
      * @param rootView The root view
      * @return UserPermission The user permission
      */
-    private CheckBox[] loadCheckBoxUserPermission (
+    private static CheckBox[] loadCheckBoxUserPermission (
             Context ctx, View rootView, UserPermission permission) {
         CheckBox[] chkPermissions = loadPermissionCheckBoxes(ctx, rootView, OWNER_TYPE);
         chkPermissions[0].setChecked(permission.isSetUID());
@@ -820,7 +897,7 @@ public class FsoPropertiesDialog
      * @param rootView The root view
      * @return UserPermission The user permission
      */
-    private CheckBox[] loadCheckBoxGroupPermission (
+    private static CheckBox[] loadCheckBoxGroupPermission (
             Context ctx, View rootView, GroupPermission permission) {
         CheckBox[] chkPermissions = loadPermissionCheckBoxes(ctx, rootView, GROUP_TYPE);
         chkPermissions[0].setChecked(permission.isSetGID());
@@ -835,7 +912,7 @@ public class FsoPropertiesDialog
      * @param rootView The root view
      * @return UserPermission The user permission
      */
-    private CheckBox[] loadCheckBoxOthersPermission (
+    private static CheckBox[] loadCheckBoxOthersPermission (
             Context ctx, View rootView, OthersPermission permission) {
         CheckBox[] chkPermissions = loadPermissionCheckBoxes(ctx, rootView, OTHERS_TYPE);
         chkPermissions[0].setChecked(permission.isStickybit());
@@ -878,30 +955,38 @@ public class FsoPropertiesDialog
      * @param type The type of permission [owner, group, others]
      * @return CheckBox[] The checkboxes associated
      */
-    private CheckBox[] loadPermissionCheckBoxes(Context ctx, View rootView, String type) {
+    private static CheckBox[] loadPermissionCheckBoxes(Context ctx, View rootView, String type) {
         Resources res = ctx.getResources();
         CheckBox[] chkPermissions = new CheckBox[4];
         chkPermissions[0] = (CheckBox)rootView.findViewById(
                 ResourcesHelper.getIdentifier(
                         res, "id",  //$NON-NLS-1$
-                        String.format("fso_permissions_%s_read", type))); //$NON-NLS-1$
+                        String.format("fso_permissions_%s_special", type))); //$NON-NLS-1$
         chkPermissions[1] = (CheckBox)rootView.findViewById(
                 ResourcesHelper.getIdentifier(
                         res, "id",  //$NON-NLS-1$
-                        String.format("fso_permissions_%s_write", type))); //$NON-NLS-1$
+                        String.format("fso_permissions_%s_read", type))); //$NON-NLS-1$
         chkPermissions[2] = (CheckBox)rootView.findViewById(
                 ResourcesHelper.getIdentifier(
                         res, "id",  //$NON-NLS-1$
-                        String.format("fso_permissions_%s_execute", type))); //$NON-NLS-1$
+                        String.format("fso_permissions_%s_write", type))); //$NON-NLS-1$
         chkPermissions[3] = (CheckBox)rootView.findViewById(
                 ResourcesHelper.getIdentifier(
                         res, "id",  //$NON-NLS-1$
-                        String.format("fso_permissions_%s_special", type))); //$NON-NLS-1$
+                        String.format("fso_permissions_%s_execute", type))); //$NON-NLS-1$
+        return chkPermissions;
+    }
+
+    /**
+     * Method that sets the listener for the permission checkboxes
+     *
+     * @param chkPermissions The checkboxes
+     */
+    private void setPermissionCheckBoxesListener(CheckBox[] chkPermissions) {
         int cc = chkPermissions.length;
         for (int i = 0; i < cc; i++) {
             chkPermissions[i].setOnCheckedChangeListener(this);
         }
-        return chkPermissions;
     }
 
     /**
@@ -1047,11 +1132,11 @@ public class FsoPropertiesDialog
 
             // Compute folders and files string
             String folders = res.getQuantityString(
-                                        R.plurals.fso_properties_dialog_folders,
+                                        R.plurals.n_folders,
                                         this.mFolderUsage.getNumberOfFolders(),
                                         Integer.valueOf(this.mFolderUsage.getNumberOfFolders()));
             String files = res.getQuantityString(
-                                        R.plurals.fso_properties_dialog_files,
+                                        R.plurals.n_files,
                                         this.mFolderUsage.getNumberOfFiles(),
                                         Integer.valueOf(this.mFolderUsage.getNumberOfFiles()));
             final String contains = res.getString(
@@ -1085,19 +1170,17 @@ public class FsoPropertiesDialog
      * @param spinner The spinner
      */
     private void adjustSpinnerSize(final Spinner spinner) {
+        final View v = this.mContentView.findViewById(R.id.fso_properties_dialog_tabhost);
         spinner.post(new Runnable() {
             @Override
             public void run() {
                 // Align with the last checkbox of the column
-                CheckBox cb = FsoPropertiesDialog.this.mChkUserPermission[3];
-                int cbW = cb.getMeasuredWidth();
-                int[] cbPos = new int[2];
-                cb.getLocationInWindow(cbPos);
+                int vW = v.getMeasuredWidth();
                 int[] cbSpn = new int[2];
                 spinner.getLocationInWindow(cbSpn);
 
                 // Set the width
-                spinner.getLayoutParams().width = (cbPos[0] - cbSpn[0]) + cbW;
+                spinner.getLayoutParams().width = vW - cbSpn[0];
             }
         });
     }
@@ -1145,9 +1228,19 @@ public class FsoPropertiesDialog
         theme.setTextColor(this.mContext, (TextView)v, "text_color"); //$NON-NLS-1$
         v = this.mContentView.findViewById(R.id.fso_properties_contains);
         theme.setTextColor(this.mContext, (TextView)v, "text_color"); //$NON-NLS-1$
-        v = this.mContentView.findViewById(R.id.fso_properties_date_label);
+        v = this.mContentView.findViewById(R.id.fso_properties_last_accessed_label);
         theme.setTextColor(this.mContext, (TextView)v, "text_color"); //$NON-NLS-1$
-        v = this.mContentView.findViewById(R.id.fso_properties_date);
+        v = this.mContentView.findViewById(R.id.fso_properties_last_accessed);
+        theme.setTextColor(this.mContext, (TextView)v, "text_color"); //$NON-NLS-1$
+        v = this.mContentView.findViewById(R.id.fso_properties_last_modified_label);
+        theme.setTextColor(this.mContext, (TextView)v, "text_color"); //$NON-NLS-1$
+        v = this.mContentView.findViewById(R.id.fso_properties_last_modified);
+        theme.setTextColor(this.mContext, (TextView)v, "text_color"); //$NON-NLS-1$
+        v = this.mContentView.findViewById(R.id.fso_properties_last_changed_label);
+        theme.setTextColor(this.mContext, (TextView)v, "text_color"); //$NON-NLS-1$
+        v = this.mContentView.findViewById(R.id.fso_properties_last_changed);
+        theme.setTextColor(this.mContext, (TextView)v, "text_color"); //$NON-NLS-1$
+        v = this.mContentView.findViewById(R.id.fso_include_in_media_scan_label);
         theme.setTextColor(this.mContext, (TextView)v, "text_color"); //$NON-NLS-1$
 
         v = this.mContentView.findViewById(R.id.fso_properties_owner_label);
@@ -1185,6 +1278,146 @@ public class FsoPropertiesDialog
         theme.setTextColor(this.mContext, (TextView)v, "text_color"); //$NON-NLS-1$
         v = this.mContentView.findViewById(R.id.fso_properties_dialog_tab_permissions);
         theme.setTextColor(this.mContext, (TextView)v, "text_color"); //$NON-NLS-1$
+    }
+
+    /**
+     * Method that prevents media scan in the directory (creates a new .nomedia file)
+     *
+     * @param nomedia The .nomedia file
+     */
+    private void preventMediaScan(final File nomedia) {
+        // Create .nomedia file. The file should not exist here
+        try {
+            if (!nomedia.createNewFile()) {
+                // failed to create .nomedia file
+                DialogHelper.showToast(
+                    this.mContext,
+                    this.mContext.getString(
+                            R.string.fso_failed_to_prevent_media_scan),
+                    Toast.LENGTH_SHORT);
+                this.mIgnoreCheckEvents = true;
+                this.mChkNoMedia.setChecked(false);
+                return;
+            }
+
+            // Refresh the listview
+            this.mHasChanged = true;
+
+        } catch (IOException ex) {
+            // failed to create .nomedia file
+            ExceptionUtil.translateException(this.mContext, ex, true, false, null);
+            DialogHelper.showToast(
+                this.mContext,
+                this.mContext.getString(
+                        R.string.fso_failed_to_prevent_media_scan),
+                Toast.LENGTH_SHORT);
+            this.mIgnoreCheckEvents = true;
+            this.mChkNoMedia.setChecked(false);
+        }
+    }
+
+    /**
+     * Method that allows media scan in the directory (removes the .nomedia file)
+     *
+     * @param nomedia The .nomedia file
+     */
+    private void allowMediaScan(final File nomedia) {
+        // Delete .nomedia file. The file should exist here
+
+        // .nomedia is a directory? Then ask the user prior to remove completely the folder
+        if (nomedia.isDirectory()) {
+            // confirm removing the dir
+            AlertDialog alert = DialogHelper.createYesNoDialog(
+                this.mContext,
+                R.string.fso_delete_nomedia_dir_title,
+                R.string.fso_delete_nomedia_dir_body,
+                new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        if (which == DialogInterface.BUTTON_POSITIVE) {
+                            boolean ret = FileHelper.deleteFolder(nomedia);
+                            if (!ret) {
+                                DialogHelper.showToast(
+                                    FsoPropertiesDialog.this.mContext,
+                                    FsoPropertiesDialog.this.mContext.getString(
+                                            R.string.fso_failed_to_allow_media_scan),
+                                    Toast.LENGTH_SHORT);
+                                FsoPropertiesDialog.this.mIgnoreCheckEvents = true;
+                                FsoPropertiesDialog.this.mChkNoMedia.setChecked(true);
+                                return;
+                            }
+
+                            // Refresh the listview
+                            FsoPropertiesDialog.this.mHasChanged = true;
+
+                        } else {
+                            FsoPropertiesDialog.this.mIgnoreCheckEvents = true;
+                            FsoPropertiesDialog.this.mChkNoMedia.setChecked(true);
+                        }
+                    }
+                });
+            DialogHelper.delegateDialogShow(this.mContext, alert);
+
+        // .nomedia file is not empty?  Then ask the user prior to remove the file
+        } else if (nomedia.length() != 0) {
+            // confirm removing non empty file
+            AlertDialog alert = DialogHelper.createYesNoDialog(
+                this.mContext,
+                R.string.fso_delete_nomedia_non_empty_title,
+                R.string.fso_delete_nomedia_non_empty_body,
+                new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        if (which == DialogInterface.BUTTON_POSITIVE) {
+                            if (!nomedia.delete()) {
+                                DialogHelper.showToast(
+                                    FsoPropertiesDialog.this.mContext,
+                                    FsoPropertiesDialog.this.mContext.getString(
+                                            R.string.fso_failed_to_allow_media_scan),
+                                    Toast.LENGTH_SHORT);
+                                FsoPropertiesDialog.this.mIgnoreCheckEvents = true;
+                                FsoPropertiesDialog.this.mChkNoMedia.setChecked(true);
+                                return;
+                            }
+
+                            // Refresh the listview
+                            FsoPropertiesDialog.this.mHasChanged = true;
+
+                        } else {
+                            FsoPropertiesDialog.this.mIgnoreCheckEvents = true;
+                            FsoPropertiesDialog.this.mChkNoMedia.setChecked(true);
+                        }
+                    }
+                });
+            DialogHelper.delegateDialogShow(this.mContext, alert);
+
+        // Normal .nomedia file
+        } else {
+            if (!nomedia.delete()) {
+                //failed to delete .nomedia file
+                DialogHelper.showToast(
+                    this.mContext,
+                    this.mContext.getString(
+                            R.string.fso_failed_to_allow_media_scan),
+                    Toast.LENGTH_SHORT);
+                FsoPropertiesDialog.this.mIgnoreCheckEvents = true;
+                FsoPropertiesDialog.this.mChkNoMedia.setChecked(true);
+                return;
+            }
+
+            // Refresh the listview
+            FsoPropertiesDialog.this.mHasChanged = true;
+        }
+    }
+
+    /**
+     * Method that checks if the .nomedia file is present
+     *
+     * @return boolean If the .nomedia file is present
+     */
+    private boolean isNoMediaFilePresent() {
+        final File nomedia = FileHelper.getNoMediaFile(this.mFso);
+        return nomedia.exists();
     }
 
 }

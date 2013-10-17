@@ -25,6 +25,9 @@ import android.os.storage.StorageVolume;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.View;
+import android.view.animation.AccelerateInterpolator;
+import android.view.animation.AlphaAnimation;
+import android.view.animation.Animation;
 import android.widget.AdapterView;
 import android.widget.ListAdapter;
 import android.widget.ListView;
@@ -46,6 +49,7 @@ import com.cyanogenmod.filemanager.model.Symlink;
 import com.cyanogenmod.filemanager.parcelables.NavigationViewInfoParcelable;
 import com.cyanogenmod.filemanager.parcelables.SearchInfoParcelable;
 import com.cyanogenmod.filemanager.preferences.AccessMode;
+import com.cyanogenmod.filemanager.preferences.DisplayRestrictions;
 import com.cyanogenmod.filemanager.preferences.FileManagerSettings;
 import com.cyanogenmod.filemanager.preferences.NavigationLayoutMode;
 import com.cyanogenmod.filemanager.preferences.ObjectIdentifier;
@@ -59,12 +63,15 @@ import com.cyanogenmod.filemanager.ui.widgets.FlingerListView.OnItemFlingerRespo
 import com.cyanogenmod.filemanager.util.CommandHelper;
 import com.cyanogenmod.filemanager.util.DialogHelper;
 import com.cyanogenmod.filemanager.util.ExceptionUtil;
+import com.cyanogenmod.filemanager.util.ExceptionUtil.OnRelaunchCommandResult;
 import com.cyanogenmod.filemanager.util.FileHelper;
-import com.cyanogenmod.filemanager.util.MimeTypeHelper;
 import com.cyanogenmod.filemanager.util.StorageHelper;
 
+import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The file manager implementation view (contains the graphical representation and the input
@@ -115,6 +122,18 @@ public class NavigationView extends RelativeLayout implements
          * @param item The item choose
          */
         void onFilePicked(FileSystemObject item);
+    }
+
+    /**
+     * An interface to communicate a change of the current directory
+     */
+    public interface OnDirectoryChangedListener {
+        /**
+         * Method invoked when the current directory changes
+         *
+         * @param item The newly active directory
+         */
+        void onDirectoryChanged(FileSystemObject item);
     }
 
     /**
@@ -193,18 +212,21 @@ public class NavigationView extends RelativeLayout implements
     List<FileSystemObject> mFiles;
     private FileSystemObjectAdapter mAdapter;
 
+    private boolean mChangingDir;
     private final Object mSync = new Object();
 
     private OnHistoryListener mOnHistoryListener;
     private OnNavigationSelectionChangedListener mOnNavigationSelectionChangedListener;
     private OnNavigationRequestMenuListener mOnNavigationRequestMenuListener;
     private OnFilePickedListener mOnFilePickedListener;
+    private OnDirectoryChangedListener mOnDirectoryChangedListener;
 
     private boolean mChRooted;
 
     private NAVIGATION_MODE mNavigationMode;
 
-    private String mMimeType = MimeTypeHelper.ALL_MIME_TYPES;
+    // Restrictions
+    private Map<DisplayRestrictions, Object> mRestrictions;
 
     /**
      * @hide
@@ -289,8 +311,15 @@ public class NavigationView extends RelativeLayout implements
      * Invoked when the instance need to be restored.
      *
      * @param info The serialized info
+     * @return boolean If can restore
      */
-    public void onRestoreState(NavigationViewInfoParcelable info) {
+    public boolean onRestoreState(NavigationViewInfoParcelable info) {
+        synchronized (mSync) {
+            if (mChangingDir) {
+                return false;
+            }
+        }
+
         //Restore the data
         this.mId = info.getId();
         this.mCurrentDir = info.getCurrentDir();
@@ -300,6 +329,7 @@ public class NavigationView extends RelativeLayout implements
 
         //Update the views
         refresh();
+        return true;
     }
 
     /**
@@ -317,6 +347,9 @@ public class NavigationView extends RelativeLayout implements
         if (mode >= 0 && mode < NAVIGATION_MODE.values().length) {
             this.mNavigationMode = NAVIGATION_MODE.values()[mode];
         }
+
+        // Initialize default restrictions (no restrictions)
+        this.mRestrictions = new HashMap<DisplayRestrictions, Object>();
 
         //Initialize variables
         this.mFiles = new ArrayList<FileSystemObject>();
@@ -345,23 +378,21 @@ public class NavigationView extends RelativeLayout implements
     }
 
     /**
-     * Method that returns the mime/type used by this class. Only the files with this mime/type
-     * are shown.
+     * Method that returns the display restrictions to apply to this view.
      *
-     * @return String The mime/type
+     * @return Map<DisplayRestrictions, Object> The restrictions to apply
      */
-    public String getMimeType() {
-        return this.mMimeType;
+    public Map<DisplayRestrictions, Object> getRestrictions() {
+        return this.mRestrictions;
     }
 
     /**
-     * Method that sets the mime/type used by this class. Only the files with this mime/type
-     * are shown.
+     * Method that sets the display restrictions to apply to this view.
      *
-     * @param mimeType String The mime/type
+     * @param mRestrictions The restrictions to apply
      */
-    public void setMimeType(String mimeType) {
-        this.mMimeType = mimeType;
+    public void setRestrictions(Map<DisplayRestrictions, Object> mRestrictions) {
+        this.mRestrictions = mRestrictions;
     }
 
     /**
@@ -471,6 +502,16 @@ public class NavigationView extends RelativeLayout implements
     }
 
     /**
+     * Method that sets the listener for directory changes
+     *
+     * @param onDirectoryChangedListener The listener reference
+     */
+    public void setOnDirectoryChangedListener(
+            OnDirectoryChangedListener onDirectoryChangedListener) {
+        this.mOnDirectoryChangedListener = onDirectoryChangedListener;
+    }
+
+    /**
      * Method that sets if the view should use flinger gesture detection.
      *
      * @param useFlinger If the view should use flinger gesture detection
@@ -553,11 +594,20 @@ public class NavigationView extends RelativeLayout implements
     }
 
     /**
+     * Method that recycles this object
+     */
+    public void recycle() {
+        if (this.mAdapter != null) {
+            this.mAdapter.dispose();
+        }
+    }
+
+    /**
      * Method that change the view mode.
      *
      * @param newMode The new mode
      */
-    @SuppressWarnings({ "unchecked", "null" })
+    @SuppressWarnings("unchecked")
     public void changeViewMode(final NavigationLayoutMode newMode) {
         synchronized (this.mSync) {
             //Check that it is really necessary change the mode
@@ -633,7 +683,6 @@ public class NavigationView extends RelativeLayout implements
             }
             this.mFiles = files;
             adapter.addAll(files);
-            adapter.notifyDataSetChanged();
 
             //Set the adapter
             this.mAdapter = adapter;
@@ -670,7 +719,6 @@ public class NavigationView extends RelativeLayout implements
      * @param fso The file system object
      */
     public void removeItem(FileSystemObject fso) {
-        this.mAdapter.remove(fso);
         // Delete also from internal list
         if (fso != null) {
             int cc = this.mFiles.size()-1;
@@ -682,7 +730,7 @@ public class NavigationView extends RelativeLayout implements
                 }
             }
         }
-        this.mAdapter.notifyDataSetChanged();
+        this.mAdapter.remove(fso);
     }
 
     /**
@@ -694,7 +742,6 @@ public class NavigationView extends RelativeLayout implements
         FileSystemObject fso = this.mAdapter.getItem(path);
         if (fso != null) {
             this.mAdapter.remove(fso);
-            this.mAdapter.notifyDataSetChanged();
         }
     }
 
@@ -745,122 +792,201 @@ public class NavigationView extends RelativeLayout implements
         // is created)
         final String fNewDir = checkChRootedNavigation(newDir);
 
+        // Wait to finalization
         synchronized (this.mSync) {
-            //Check that it is really necessary change the directory
-            if (!reload && this.mCurrentDir != null && this.mCurrentDir.compareTo(fNewDir) == 0) {
-                return;
+            if (mChangingDir) {
+                try {
+                    mSync.wait();
+                } catch (InterruptedException iex) {
+                    // Ignore
+                }
             }
+            mChangingDir = true;
+        }
 
-            final boolean hasChanged =
-                    !(this.mCurrentDir != null && this.mCurrentDir.compareTo(fNewDir) == 0);
-            final boolean isNewHistory = (this.mCurrentDir != null);
+        //Check that it is really necessary change the directory
+        if (!reload && this.mCurrentDir != null && this.mCurrentDir.compareTo(fNewDir) == 0) {
+            return;
+        }
 
-            //Execute the listing in a background process
-            AsyncTask<String, Integer, List<FileSystemObject>> task =
-                    new AsyncTask<String, Integer, List<FileSystemObject>>() {
-                        /**
-                         * {@inheritDoc}
-                         */
-                        @Override
-                        protected List<FileSystemObject> doInBackground(String... params) {
-                            try {
-                                //Reset the custom title view and returns to breadcrumb
-                                if (NavigationView.this.mTitle != null) {
-                                    NavigationView.this.mTitle.post(new Runnable() {
-                                        @Override
-                                        public void run() {
-                                            try {
-                                                NavigationView.this.mTitle.restoreView();
-                                            } catch (Exception e) {
-                                                e.printStackTrace();
-                                            }
-                                        }
-                                    });
-                                }
+        final boolean hasChanged =
+                !(this.mCurrentDir != null && this.mCurrentDir.compareTo(fNewDir) == 0);
+        final boolean isNewHistory = (this.mCurrentDir != null);
 
-
-                                //Start of loading data
-                                if (NavigationView.this.mBreadcrumb != null) {
-                                    try {
-                                        NavigationView.this.mBreadcrumb.startLoading();
-                                    } catch (Throwable ex) {
-                                        /**NON BLOCK**/
-                                    }
-                                }
-
-                                //Get the files, resolve links and apply configuration
-                                //(sort, hidden, ...)
-                                List<FileSystemObject> files = NavigationView.this.mFiles;
-                                if (!useCurrent) {
-                                    files = CommandHelper.listFiles(getContext(), fNewDir, null);
-                                }
-                                return files;
-                            } catch (final ConsoleAllocException e) {
-                                //Show exception and exists
-                                NavigationView.this.post(new Runnable() {
+        //Execute the listing in a background process
+        AsyncTask<String, Integer, List<FileSystemObject>> task =
+                new AsyncTask<String, Integer, List<FileSystemObject>>() {
+                    /**
+                     * {@inheritDoc}
+                     */
+                    @Override
+                    protected List<FileSystemObject> doInBackground(String... params) {
+                        try {
+                            //Reset the custom title view and returns to breadcrumb
+                            if (NavigationView.this.mTitle != null) {
+                                NavigationView.this.mTitle.post(new Runnable() {
                                     @Override
                                     public void run() {
-                                        Context ctx = getContext();
-                                        Log.e(TAG, ctx.getString(
-                                                R.string.msgs_cant_create_console), e);
-                                        DialogHelper.showToast(ctx,
-                                                R.string.msgs_cant_create_console,
-                                                Toast.LENGTH_LONG);
-                                        ((Activity)ctx).finish();
+                                        try {
+                                            NavigationView.this.mTitle.restoreView();
+                                        } catch (Exception e) {
+                                            e.printStackTrace();
+                                        }
                                     }
                                 });
-                                return null;
+                            }
 
-                            } catch (Exception ex) {
-                                //End of loading data
-                                if (NavigationView.this.mBreadcrumb != null) {
-                                    try {
-                                        NavigationView.this.mBreadcrumb.endLoading();
-                                    } catch (Throwable ex2) {
-                                        /**NON BLOCK**/
+
+                            //Start of loading data
+                            if (NavigationView.this.mBreadcrumb != null) {
+                                try {
+                                    NavigationView.this.mBreadcrumb.startLoading();
+                                } catch (Throwable ex) {
+                                    /**NON BLOCK**/
+                                }
+                            }
+
+                            //Get the files, resolve links and apply configuration
+                            //(sort, hidden, ...)
+                            List<FileSystemObject> files = NavigationView.this.mFiles;
+                            if (!useCurrent) {
+                                files = CommandHelper.listFiles(getContext(), fNewDir, null);
+                            }
+                            return files;
+
+                        } catch (final ConsoleAllocException e) {
+                            //Show exception and exists
+                            NavigationView.this.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    Context ctx = getContext();
+                                    Log.e(TAG, ctx.getString(
+                                            R.string.msgs_cant_create_console), e);
+                                    DialogHelper.showToast(ctx,
+                                            R.string.msgs_cant_create_console,
+                                            Toast.LENGTH_LONG);
+                                    ((Activity)ctx).finish();
+                                }
+                            });
+                            return null;
+
+                        } catch (Exception ex) {
+                            //End of loading data
+                            if (NavigationView.this.mBreadcrumb != null) {
+                                try {
+                                    NavigationView.this.mBreadcrumb.endLoading();
+                                } catch (Throwable ex2) {
+                                    /**NON BLOCK**/
+                                }
+                            }
+
+                            //Capture exception (attach task, and use listener to do the anim)
+                            ExceptionUtil.attachAsyncTask(
+                                ex,
+                                new AsyncTask<Object, Integer, Boolean>() {
+                                    private List<FileSystemObject> mTaskFiles = null;
+                                    @Override
+                                    @SuppressWarnings({
+                                            "unchecked", "unqualified-field-access"
+                                    })
+                                    protected Boolean doInBackground(Object... taskParams) {
+                                        mTaskFiles = (List<FileSystemObject>)taskParams[0];
+                                        return Boolean.TRUE;
+                                    }
+
+                                    @Override
+                                    @SuppressWarnings("unqualified-field-access")
+                                    protected void onPostExecute(Boolean result) {
+                                        if (!result.booleanValue()) {
+                                            return;
+                                        }
+                                        onPostExecuteTask(
+                                                mTaskFiles, addToHistory,
+                                                isNewHistory, hasChanged,
+                                                searchInfo, fNewDir, scrollTo);
+                                    }
+                                });
+                            final OnRelaunchCommandResult exListener =
+                                    new OnRelaunchCommandResult() {
+                                @Override
+                                public void onSuccess() {
+                                    done();
+                                }
+                                @Override
+                                public void onFailed(Throwable cause) {
+                                    done();
+                                }
+                                @Override
+                                public void onCancelled() {
+                                    done();
+                                }
+                                private void done() {
+                                    // Do animation
+                                    fadeEfect(false);
+                                    synchronized (mSync) {
+                                        mChangingDir = false;
+                                        mSync.notify();
                                     }
                                 }
-
-                                //Capture exception
-                                ExceptionUtil.attachAsyncTask(
-                                    ex,
-                                    new AsyncTask<Object, Integer, Boolean>() {
-                                        @Override
-                                        @SuppressWarnings("unchecked")
-                                        protected Boolean doInBackground(Object... taskParams) {
-                                            final List<FileSystemObject> files =
-                                                    (List<FileSystemObject>)taskParams[0];
-                                            NavigationView.this.mAdapterView.post(
-                                                    new Runnable() {
-                                                        @Override
-                                                        public void run() {
-                                                            onPostExecuteTask(
-                                                                    files, addToHistory,
-                                                                    isNewHistory, hasChanged,
-                                                                    searchInfo, fNewDir, scrollTo);
-                                                        }
-                                                    });
-                                            return Boolean.TRUE;
-                                        }
-
-                                    });
-                                ExceptionUtil.translateException(getContext(), ex);
-                            }
-                            return null;
+                            };
+                            ExceptionUtil.translateException(
+                                    getContext(), ex, false, true, exListener);
                         }
+                        return null;
+                    }
 
-                        /**
-                         * {@inheritDoc}
-                         */
-                        @Override
-                        protected void onPostExecute(List<FileSystemObject> files) {
+                    /**
+                     * {@inheritDoc}
+                     */
+                    @Override
+                    protected void onPreExecute() {
+                        // Do animation
+                        fadeEfect(true);
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    @Override
+                    protected void onPostExecute(List<FileSystemObject> files) {
+                        // This means an exception. This method will be recalled then
+                        if (files != null) {
                             onPostExecuteTask(
                                     files, addToHistory, isNewHistory,
                                     hasChanged, searchInfo, fNewDir, scrollTo);
+
+                            // Do animation
+                            fadeEfect(false);
+
+                            synchronized (mSync) {
+                                mChangingDir = false;
+                                mSync.notify();
+                            }
                         }
-                   };
-            task.execute(fNewDir);
-        }
+                    }
+
+                    /**
+                     * Method that performs a fade animation.
+                     *
+                     * @param out Fade out (true); Fade in (false)
+                     */
+                    void fadeEfect(final boolean out) {
+                        Activity activity = (Activity)getContext();
+                        activity.runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                Animation fadeAnim = out ?
+                                        new AlphaAnimation(1, 0) :
+                                        new AlphaAnimation(0, 1);
+                                fadeAnim.setDuration(50L);
+                                fadeAnim.setFillAfter(true);
+                                fadeAnim.setInterpolator(new AccelerateInterpolator());
+                                NavigationView.this.startAnimation(fadeAnim);
+                            }
+                        });
+                    }
+               };
+        task.execute(fNewDir);
     }
 
 
@@ -888,7 +1014,7 @@ public class NavigationView extends RelativeLayout implements
 
             //Apply user preferences
             List<FileSystemObject> sortedFiles =
-                    FileHelper.applyUserPreferences(files, this.mMimeType, this.mChRooted);
+                    FileHelper.applyUserPreferences(files, this.mRestrictions, this.mChRooted);
 
             //Remove parent directory if we are in the root of a chrooted environment
             if (this.mChRooted && StorageHelper.isStorageVolume(newDir)) {
@@ -924,7 +1050,10 @@ public class NavigationView extends RelativeLayout implements
 
             //The current directory is now the "newDir"
             this.mCurrentDir = newDir;
-
+            if (this.mOnDirectoryChangedListener != null) {
+                FileSystemObject dir = FileHelper.createFileSystemObject(new File(newDir));
+                this.mOnDirectoryChangedListener.onDirectoryChanged(dir);
+            }
         } finally {
             //If calling activity is search, then save the search history
             if (searchInfo != null) {
@@ -952,6 +1081,7 @@ public class NavigationView extends RelativeLayout implements
         final AdapterView<ListAdapter> view =
                 (AdapterView<ListAdapter>)findViewById(RESOURCE_CURRENT_LAYOUT);
         FileSystemObjectAdapter adapter = (FileSystemObjectAdapter)view.getAdapter();
+        adapter.setNotifyOnChange(false);
         adapter.clear();
         adapter.addAll(files);
         adapter.notifyDataSetChanged();
@@ -1017,23 +1147,30 @@ public class NavigationView extends RelativeLayout implements
             FileSystemObject fso = ((FileSystemObjectAdapter)parent.getAdapter()).getItem(position);
             if (fso instanceof ParentDirectory) {
                 changeCurrentDir(fso.getParent(), true, false, false, null, null);
+                return;
             } else if (fso instanceof Directory) {
                 changeCurrentDir(fso.getFullPath(), true, false, false, null, null);
+                return;
             } else if (fso instanceof Symlink) {
                 Symlink symlink = (Symlink)fso;
                 if (symlink.getLinkRef() != null && symlink.getLinkRef() instanceof Directory) {
                     changeCurrentDir(
                             symlink.getLinkRef().getFullPath(), true, false, false, null, null);
+                    return;
                 }
+
+                // Open the link ref
+                fso = symlink.getLinkRef();
+            }
+
+            // Open the file (edit or pick)
+            if (this.mNavigationMode.compareTo(NAVIGATION_MODE.BROWSABLE) == 0) {
+                // Open the file with the preferred registered app
+                IntentsActionPolicy.openFileSystemObject(getContext(), fso, false, null, null);
             } else {
-                if (this.mNavigationMode.compareTo(NAVIGATION_MODE.BROWSABLE) == 0) {
-                    // Open the file with the preferred registered app
-                    IntentsActionPolicy.openFileSystemObject(getContext(), fso, false, null, null);
-                } else {
-                    // Request a file pick selection
-                    if (this.mOnFilePickedListener != null) {
-                        this.mOnFilePickedListener.onFilePicked(fso);
-                    }
+                // Request a file pick selection
+                if (this.mOnFilePickedListener != null) {
+                    this.mOnFilePickedListener.onFilePicked(fso);
                 }
             }
         } catch (Throwable ex) {
@@ -1045,26 +1182,30 @@ public class NavigationView extends RelativeLayout implements
      * {@inheritDoc}
      */
     @Override
-    public void onRequestRefresh(Object o) {
+    public void onRequestRefresh(Object o, boolean clearSelection) {
         if (o instanceof FileSystemObject) {
             refresh((FileSystemObject)o);
         } else if (o == null) {
             refresh();
         }
-        onDeselectAll();
+        if (clearSelection) {
+            onDeselectAll();
+        }
     }
 
     /**
      * {@inheritDoc}
      */
     @Override
-    public void onRequestRemove(Object o) {
+    public void onRequestRemove(Object o, boolean clearSelection) {
         if (o != null && o instanceof FileSystemObject) {
             removeItem((FileSystemObject)o);
         } else {
-            onRequestRefresh(null);
+            onRequestRefresh(null, clearSelection);
         }
-        onDeselectAll();
+        if (clearSelection) {
+            onDeselectAll();
+        }
     }
 
     /**

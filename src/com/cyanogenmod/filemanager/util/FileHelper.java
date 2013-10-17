@@ -23,7 +23,11 @@ import android.util.Log;
 
 import com.cyanogenmod.filemanager.FileManagerApplication;
 import com.cyanogenmod.filemanager.R;
+import com.cyanogenmod.filemanager.commands.SyncResultExecutable;
 import com.cyanogenmod.filemanager.commands.shell.ResolveLinkCommand;
+import com.cyanogenmod.filemanager.console.Console;
+import com.cyanogenmod.filemanager.console.ExecutionException;
+import com.cyanogenmod.filemanager.console.InsufficientPermissionsException;
 import com.cyanogenmod.filemanager.model.AID;
 import com.cyanogenmod.filemanager.model.BlockDevice;
 import com.cyanogenmod.filemanager.model.CharacterDevice;
@@ -31,6 +35,7 @@ import com.cyanogenmod.filemanager.model.Directory;
 import com.cyanogenmod.filemanager.model.DomainSocket;
 import com.cyanogenmod.filemanager.model.FileSystemObject;
 import com.cyanogenmod.filemanager.model.Group;
+import com.cyanogenmod.filemanager.model.Identity;
 import com.cyanogenmod.filemanager.model.NamedPipe;
 import com.cyanogenmod.filemanager.model.ParentDirectory;
 import com.cyanogenmod.filemanager.model.Permissions;
@@ -38,17 +43,29 @@ import com.cyanogenmod.filemanager.model.RegularFile;
 import com.cyanogenmod.filemanager.model.Symlink;
 import com.cyanogenmod.filemanager.model.SystemFile;
 import com.cyanogenmod.filemanager.model.User;
+import com.cyanogenmod.filemanager.preferences.DisplayRestrictions;
 import com.cyanogenmod.filemanager.preferences.FileManagerSettings;
+import com.cyanogenmod.filemanager.preferences.FileTimeFormatMode;
 import com.cyanogenmod.filemanager.preferences.NavigationSortMode;
 import com.cyanogenmod.filemanager.preferences.ObjectIdentifier;
+import com.cyanogenmod.filemanager.preferences.ObjectStringIdentifier;
 import com.cyanogenmod.filemanager.preferences.Preferences;
+import com.cyanogenmod.filemanager.util.MimeTypeHelper.MimeTypeCategory;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 /**
  * A helper class with useful methods for deal with files.
@@ -69,7 +86,7 @@ public final class FileHelper {
      * The root directory.
      * @hide
      */
-    public static String ROOT_DIRECTORY = "/";  //$NON-NLS-1$
+    public static final String ROOT_DIRECTORY = "/";  //$NON-NLS-1$
 
     /**
      * The parent directory string.
@@ -94,6 +111,20 @@ public final class FileHelper {
      * @hide
      */
     public static final String NEWLINE = System.getProperty("line.separator"); //$NON-NLS-1$
+
+    // The date/time formats objects
+    /**
+     * @hide
+     */
+    public final static Object DATETIME_SYNC = new Object();
+    /**
+     * @hide
+     */
+    public static boolean sReloadDateTimeFormats = true;
+    private static String sDateTimeFormatOrder = null;
+    private static FileTimeFormatMode sFiletimeFormatMode = null;
+    private static DateFormat sDateFormat = null;
+    private static DateFormat sTimeFormat = null;
 
     /**
      * Constructor of <code>FileHelper</code>.
@@ -153,7 +184,6 @@ public final class FileHelper {
      */
     public static String getHumanReadableSize(long size) {
         Resources res = FileManagerApplication.getInstance().getResources();
-        final String format = "%d %s"; //$NON-NLS-1$
         final int[] magnitude = {
                                  R.string.size_bytes,
                                  R.string.size_kilobytes,
@@ -166,35 +196,11 @@ public final class FileHelper {
         for (int i = 0; i < cc; i++) {
             long s = aux / 1024;
             if (aux < 1024) {
-                return String.format(format, Long.valueOf(aux), res.getString(magnitude[i]));
+                return Long.toString(aux) + " " + res.getString(magnitude[i]); //$NON-NLS-1$
             }
             aux = s;
         }
-        return String.format(
-                format, Long.valueOf(aux), res.getString(magnitude[magnitude.length - 1]));
-    }
-
-    /**
-     * Method that returns if an file system object requires elevated privileges.
-     * This occurs when the user is "root" or when the user console doesn't have
-     * sufficient permissions over the file system object.
-     *
-     * @param fso File system object
-     * @return boolean If the file system object requires elevated privileges
-     */
-    public static boolean isPrivileged(FileSystemObject fso) {
-        //Parent directory doesn't require privileges
-        if (fso instanceof ParentDirectory) {
-            return false;
-        }
-
-        //Checks if user is the administrator user
-        if (fso.getUser().getName().compareTo(USER_ROOT) == 0) {
-            return true;
-        }
-
-        //No privileged
-        return false;
+        return Long.toString(aux) + " " + res.getString(magnitude[cc - 1]); //$NON-NLS-1$
     }
 
     /**
@@ -206,6 +212,28 @@ public final class FileHelper {
     public static boolean isRootDirectory(FileSystemObject fso) {
         if (fso.getName() == null) return true;
         return fso.getName().compareTo(FileHelper.ROOT_DIRECTORY) == 0;
+    }
+
+    /**
+     * Method that returns if the folder if the root directory.
+     *
+     * @param folder The folder
+     * @return boolean if the folder if the root directory
+     */
+    public static boolean isRootDirectory(String folder) {
+        if (folder == null) return true;
+        return isRootDirectory(new File(folder));
+    }
+
+    /**
+     * Method that returns if the folder if the root directory.
+     *
+     * @param folder The folder
+     * @return boolean if the folder if the root directory
+     */
+    public static boolean isRootDirectory(File folder) {
+        if (folder.getPath() == null) return true;
+        return folder.getPath().compareTo(FileHelper.ROOT_DIRECTORY) == 0;
     }
 
     /**
@@ -276,6 +304,30 @@ public final class FileHelper {
 
         // General extraction method
         return name.substring(pos + 1);
+    }
+
+    /**
+     * Method that returns the parent directory of a file/folder
+     *
+     * @param path The file/folder
+     * @return String The parent directory
+     */
+    public static String getParentDir(String path) {
+        return getParentDir(new File(path));
+    }
+
+    /**
+     * Method that returns the parent directory of a file/folder
+     *
+     * @param path The file/folder
+     * @return String The parent directory
+     */
+    public static String getParentDir(File path) {
+        String parent = path.getParent();
+        if (parent == null && path.getAbsolutePath().compareTo(FileHelper.ROOT_DIRECTORY) != 0) {
+            parent = FileHelper.ROOT_DIRECTORY;
+        }
+        return parent;
     }
 
     /**
@@ -453,13 +505,14 @@ public final class FileHelper {
      * (sort mode, hidden files, ...).
      *
      * @param files The listed files
-     * @param mimeType The mime-type to apply. if null returns all.
+     * @param restrictions The restrictions to apply when displaying files
      * @param chRooted If app run with no privileges
      * @return List<FileSystemObject> The applied mode listed files
      */
     public static List<FileSystemObject> applyUserPreferences(
-                    List<FileSystemObject> files, String mimeType, boolean chRooted) {
-        return applyUserPreferences(files, mimeType, false, chRooted);
+                    List<FileSystemObject> files, Map<DisplayRestrictions,
+                    Object> restrictions, boolean chRooted) {
+        return applyUserPreferences(files, restrictions, false, chRooted);
     }
 
     /**
@@ -467,13 +520,14 @@ public final class FileHelper {
      * (sort mode, hidden files, ...).
      *
      * @param files The listed files
-     * @param mimeType The mime-type to apply. if null returns all.
+     * @param restrictions The restrictions to apply when displaying files
      * @param noSort If sort must be applied
      * @param chRooted If app run with no privileges
      * @return List<FileSystemObject> The applied mode listed files
      */
     public static List<FileSystemObject> applyUserPreferences(
-            List<FileSystemObject> files, String mimeType, boolean noSort, boolean chRooted) {
+            List<FileSystemObject> files, Map<DisplayRestrictions, Object> restrictions,
+            boolean noSort, boolean chRooted) {
         //Retrieve user preferences
         SharedPreferences prefs = Preferences.getSharedPreferences();
         FileManagerSettings sortModePref = FileManagerSettings.SETTINGS_SORT_MODE;
@@ -517,12 +571,10 @@ public final class FileHelper {
                 }
             }
 
-            //Mime/Type
-            if (chRooted && !isDirectory(file)) {
-                if (mimeType != null && mimeType.compareTo(MimeTypeHelper.ALL_MIME_TYPES) != 0) {
-                    // NOTE: We don't need the context here, because mime-type database should
-                    // be loaded prior to this call
-                    if (!MimeTypeHelper.matchesMimeType(null, file, mimeType)) {
+            // Restrictions (only apply to files)
+            if (restrictions != null) {
+                if (!isDirectory(file)) {
+                    if (!isDisplayAllowed(file, restrictions)) {
                         files.remove(i);
                         continue;
                     }
@@ -575,6 +627,82 @@ public final class FileHelper {
 
         //Return the files
         return files;
+    }
+
+    /**
+     * Method that check if a file should be displayed according to the restrictions
+     *
+     * @param fso The file system object to check
+     * @param restrictions The restrictions map
+     * @return boolean If the file should be displayed
+     */
+    private static boolean isDisplayAllowed(
+            FileSystemObject fso, Map<DisplayRestrictions, Object> restrictions) {
+        Iterator<DisplayRestrictions> it = restrictions.keySet().iterator();
+        while (it.hasNext()) {
+            DisplayRestrictions restriction = it.next();
+            Object value = restrictions.get(restriction);
+            if (value == null) {
+                continue;
+            }
+            switch (restriction) {
+                case CATEGORY_TYPE_RESTRICTION:
+                    if (value instanceof MimeTypeCategory) {
+                        MimeTypeCategory cat1 = (MimeTypeCategory)value;
+                        // NOTE: We don't need the context here, because mime-type
+                        // database should be loaded prior to this call
+                        MimeTypeCategory cat2 = MimeTypeHelper.getCategory(null, fso);
+                        if (cat1.compareTo(cat2) != 0) {
+                            return false;
+                        }
+                    }
+                    break;
+
+                case MIME_TYPE_RESTRICTION:
+                    if (value instanceof String) {
+                        String mimeType = (String)value;
+                        if (mimeType.compareTo(MimeTypeHelper.ALL_MIME_TYPES) != 0) {
+                            // NOTE: We don't need the context here, because mime-type
+                            // database should be loaded prior to this call
+                            if (!MimeTypeHelper.matchesMimeType(null, fso, mimeType)) {
+                                return false;
+                            }
+                        }
+                    }
+                    break;
+
+                case SIZE_RESTRICTION:
+                    if (value instanceof Long) {
+                        Long maxSize = (Long)value;
+                        if (fso.getSize() > maxSize.longValue()) {
+                            return false;
+                        }
+                    }
+                    break;
+
+                case DIRECTORY_ONLY_RESTRICTION:
+                    if (value instanceof Boolean) {
+                        Boolean directoryOnly = (Boolean) value;
+                        if (directoryOnly.booleanValue() && !FileHelper.isDirectory(fso)) {
+                            return false;
+                        }
+                    }
+                    break;
+
+                case LOCAL_FILESYSTEM_ONLY_RESTRICTION:
+                    if (value instanceof Boolean) {
+                        Boolean localOnly = (Boolean)value;
+                        if (localOnly.booleanValue()) {
+                            /** TODO Needed when CMFM gets networking **/
+                        }
+                    }
+                    break;
+
+                default:
+                    break;
+            }
+        }
+        return true;
     }
 
     /**
@@ -657,6 +785,7 @@ public final class FileHelper {
      * @return String The path with the trailing slash
      */
     public static String addTrailingSlash(String path) {
+        if (path == null) return null;
         return path.endsWith(File.separator) ? path : path + File.separator;
     }
 
@@ -667,6 +796,7 @@ public final class FileHelper {
      * @return String The path without the trailing slash
      */
     public static String removeTrailingSlash(String path) {
+        if (path == null) return null;
         if (path.trim().compareTo(ROOT_DIRECTORY) == 0) return path;
         if (path.endsWith(File.separator)) {
             return path.substring(0, path.length()-1);
@@ -696,7 +826,7 @@ public final class FileHelper {
             if (ext == null) {
                 ext = ""; //$NON-NLS-1$
             } else {
-                ext = String.format(".%s", ext); //$NON-NLS-1$
+                ext = "." + ext; //$NON-NLS-1$
             }
             newName = ctx.getString(regexp, name, ext);
         } while (isNameExists(files, newName));
@@ -735,7 +865,13 @@ public final class FileHelper {
         final String[] VALID =
                 {
                     "tar", "tgz", "tar.gz", "tar.bz2", "tar.lzma",
-                    "zip", "gz", "bz2", "lzma", "xz", "Z"
+                    "zip", "gz", "bz2", "lzma", "xz", "Z", "rar"
+                };
+        // Null values for required commands
+        final String[] OPT_KEYS =
+                {
+                    null, null, null, null, null,
+                    "unzip", null, null, "unlzma", "unxz", "uncompress", "unrar"
                 };
 
         // Check that have a valid file
@@ -749,8 +885,13 @@ public final class FileHelper {
         if (ext != null) {
             int cc = VALID.length;
             for (int i = 0; i < cc; i++) {
-                if (VALID[i].compareTo(ext) == 0) {
-                    return true;
+                if (VALID[i].compareToIgnoreCase(ext) == 0) {
+                    // Is the command present
+                    if (OPT_KEYS[i] != null &&
+                        FileManagerApplication.hasOptionalCommand(OPT_KEYS[i])) {
+                        return true;
+                    }
+                    return false;
                 }
             }
         }
@@ -792,11 +933,10 @@ public final class FileHelper {
     /**
      * Method that creates a {@link FileSystemObject} from a {@link File}
      *
-     * @param ctx The current context
      * @param file The file or folder reference
      * @return FileSystemObject The file system object reference
      */
-    public static FileSystemObject createFileSystemObject(Context ctx, File file) {
+    public static FileSystemObject createFileSystemObject(File file) {
         try {
             // The user and group name of the files. In ChRoot, aosp give restrict access to
             // this user and group.
@@ -807,20 +947,21 @@ public final class FileHelper {
             // The user and group name of the files. In ChRoot, aosp give restrict access to
             // this user and group. This applies for permission also. This has no really much
             // interest if we not allow to change the permissions
-            AID userAID = AIDHelper.getAIDFromName(ctx, USER);
-            AID groupAID = AIDHelper.getAIDFromName(ctx, GROUP);
+            AID userAID = AIDHelper.getAIDFromName(USER);
+            AID groupAID = AIDHelper.getAIDFromName(GROUP);
             User user = new User(userAID.getId(), userAID.getName());
             Group group = new Group(groupAID.getId(), groupAID.getName());
             Permissions perm = Permissions.fromRawString(PERMISSIONS);
 
             // Build a directory?
+            Date lastModified = new Date(file.lastModified());
             if (file.isDirectory()) {
                 return
                     new Directory(
                             file.getName(),
                             file.getParent(),
                             user, group, perm,
-                            new Date(file.lastModified()));
+                            lastModified, lastModified, lastModified); // The only date we have
             }
 
             // Build a regular file
@@ -829,11 +970,352 @@ public final class FileHelper {
                         file.getName(),
                         file.getParent(),
                         user, group, perm,
-                        new Date(file.lastModified()),
-                        file.length());
+                        file.length(),
+                        lastModified, lastModified, lastModified); // The only date we have
         } catch (Exception e) {
             Log.e(TAG, "Exception retrieving the fso", e); //$NON-NLS-1$
         }
         return null;
+    }
+
+    /**
+     * Method that copies recursively to the destination
+     *
+     * @param src The source file or folder
+     * @param dst The destination file or folder
+     * @param bufferSize The buffer size for the operation
+     * @return boolean If the operation complete successfully
+     * @throws ExecutionException If a problem was detected in the operation
+     */
+    public static boolean copyRecursive(
+            final File src, final File dst, int bufferSize) throws ExecutionException {
+        if (src.isDirectory()) {
+            // Create the directory
+            if (dst.exists() && !dst.isDirectory()) {
+                Log.e(TAG,
+                        String.format("Failed to check destionation dir: %s", dst)); //$NON-NLS-1$
+                throw new ExecutionException("the path exists but is not a folder"); //$NON-NLS-1$
+            }
+            if (!dst.exists()) {
+                if (!dst.mkdir()) {
+                    Log.e(TAG, String.format("Failed to create directory: %s", dst)); //$NON-NLS-1$
+                    return false;
+                }
+            }
+            File[] files = src.listFiles();
+            if (files != null) {
+                for (int i = 0; i < files.length; i++) {
+                    if (!copyRecursive(files[i], new File(dst, files[i].getName()), bufferSize)) {
+                        return false;
+                    }
+                }
+            }
+        } else {
+            // Copy the directory
+            if (!bufferedCopy(src, dst,bufferSize)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Method that copies a file
+     *
+     * @param src The source file
+     * @param dst The destination file
+     * @param bufferSize The buffer size for the operation
+     * @return boolean If the operation complete successfully
+     */
+    public static boolean bufferedCopy(final File src, final File dst, int bufferSize) {
+        BufferedInputStream bis = null;
+        BufferedOutputStream bos = null;
+        try {
+            bis = new BufferedInputStream(new FileInputStream(src), bufferSize);
+            bos = new BufferedOutputStream(new FileOutputStream(dst), bufferSize);
+            int read = 0;
+            byte[] data = new byte[bufferSize];
+            while ((read = bis.read(data, 0, bufferSize)) != -1) {
+                bos.write(data, 0, read);
+            }
+            return true;
+
+        } catch (Throwable e) {
+            Log.e(TAG,
+                    String.format(TAG, "Failed to copy from %s to %d", src, dst), e); //$NON-NLS-1$
+            return false;
+        } finally {
+            try {
+                if (bis != null) {
+                    bis.close();
+                }
+            } catch (Throwable e) {/**NON BLOCK**/}
+            try {
+                if (bos != null) {
+                    bos.close();
+                }
+            } catch (Throwable e) {/**NON BLOCK**/}
+        }
+    }
+
+    /**
+     * Method that deletes a folder recursively
+     *
+     * @param folder The folder to delete
+     * @return boolean If the folder was deleted
+     */
+    public static boolean deleteFolder(File folder) {
+        File[] files = folder.listFiles();
+        if (files != null) {
+            for (int i = 0; i < files.length; i++) {
+                if (files[i].isDirectory()) {
+                    if (!deleteFolder(files[i])) {
+                        return false;
+                    }
+                } else {
+                    if (!files[i].delete()) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return folder.delete();
+    }
+
+    /**
+     * Method that returns the canonical/absolute path of the path.<br/>
+     * This method performs path resolution
+     *
+     * @param path The path to convert
+     * @return String The canonical/absolute path
+     */
+    public static String getAbsPath(String path) {
+        try {
+            return new File(path).getCanonicalPath();
+        } catch (Exception e) {
+            return new File(path).getAbsolutePath();
+        }
+    }
+
+    /**
+     * Method that returns the .nomedia file
+     *
+     * @param fso The folder that contains the .nomedia file
+     * @return File The .nomedia file
+     */
+    public static File getNoMediaFile(FileSystemObject fso) {
+        File file = null;
+        try {
+            file = new File(fso.getFullPath()).getCanonicalFile();
+        } catch (Exception e) {
+            file = new File(fso.getFullPath()).getAbsoluteFile();
+        }
+        return new File(file, ".nomedia").getAbsoluteFile(); //$NON-NLS-1$
+    }
+
+    /**
+     * Method that ensures that the actual console has access to read the
+     * {@link FileSystemObject} passed.
+     *
+     * @param console The console
+     * @param fso The {@link FileSystemObject} to check
+     * @param executable The executable to associate to the {@link InsufficientPermissionsException}
+     * @throws InsufficientPermissionsException If the console doesn't have enough rights
+     */
+    public static void ensureReadAccess(
+            Console console, FileSystemObject fso, SyncResultExecutable executable)
+            throws InsufficientPermissionsException {
+        try {
+            if (console.isPrivileged()) {
+                // Should have access
+                return;
+            }
+            Identity identity = console.getIdentity();
+            if (identity == null) {
+                throw new InsufficientPermissionsException(executable);
+            }
+            Permissions permissions = fso.getPermissions();
+            User user = fso.getUser();
+            Group group = fso.getGroup();
+            List<Group> groups = identity.getGroups();
+            if ( permissions == null || user == null || group == null) {
+                throw new InsufficientPermissionsException(executable);
+            }
+            // Check others
+            if (permissions.getOthers().isRead()) {
+                return;
+            }
+            // Check user
+            if (user.getId() == identity.getUser().getId() && permissions.getUser().isRead()) {
+                return;
+            }
+            // Check group
+            if (group.getId() == identity.getGroup().getId() && permissions.getGroup().isRead()) {
+                return;
+            }
+            // Check groups
+            int cc = groups.size();
+            for (int i = 0; i < cc; i++) {
+                Group g = groups.get(i);
+                if (group.getId() == g.getId() && permissions.getGroup().isRead()) {
+                    return;
+                }
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to check fso read permission,", e); //$NON-NLS-1$
+        }
+        throw new InsufficientPermissionsException(executable);
+    }
+
+    /**
+     * Method that ensures that the actual console has access to write the
+     * {@link FileSystemObject} passed.
+     *
+     * @param console The console
+     * @param fso The {@link FileSystemObject} to check
+     * @param executable The executable to associate to the {@link InsufficientPermissionsException}
+     * @throws InsufficientPermissionsException If the console doesn't have enough rights
+     */
+    public static void ensureWriteAccess(
+            Console console, FileSystemObject fso, SyncResultExecutable executable)
+            throws InsufficientPermissionsException {
+        try {
+            if (console.isPrivileged()) {
+                // Should have access
+                return;
+            }
+            Identity identity = console.getIdentity();
+            if (identity == null) {
+                throw new InsufficientPermissionsException(executable);
+            }
+            Permissions permissions = fso.getPermissions();
+            User user = fso.getUser();
+            Group group = fso.getGroup();
+            List<Group> groups = identity.getGroups();
+            if ( permissions == null || user == null || group == null) {
+                throw new InsufficientPermissionsException(executable);
+            }
+            // Check others
+            if (permissions.getOthers().isWrite()) {
+                return;
+            }
+            // Check user
+            if (user.getId() == identity.getUser().getId() && permissions.getUser().isWrite()) {
+                return;
+            }
+            // Check group
+            if (group.getId() == identity.getGroup().getId() && permissions.getGroup().isWrite()) {
+                return;
+            }
+            // Check groups
+            int cc = groups.size();
+            for (int i = 0; i < cc; i++) {
+                Group g = groups.get(i);
+                if (group.getId() == g.getId() && permissions.getGroup().isWrite()) {
+                    return;
+                }
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to check fso write permission,", e); //$NON-NLS-1$
+        }
+        throw new InsufficientPermissionsException(executable);
+    }
+
+    /**
+     * Method that ensures that the actual console has access to execute the
+     * {@link FileSystemObject} passed.
+     *
+     * @param console The console
+     * @param fso The {@link FileSystemObject} to check
+     * @param executable The executable to associate to the {@link InsufficientPermissionsException}
+     * @throws InsufficientPermissionsException If the console doesn't have enough rights
+     */
+    public static void ensureExecuteAccess(
+            Console console, FileSystemObject fso, SyncResultExecutable executable)
+            throws InsufficientPermissionsException {
+        try {
+            if (console.isPrivileged()) {
+                // Should have access
+                return;
+            }
+            Identity identity = console.getIdentity();
+            if (identity == null) {
+                throw new InsufficientPermissionsException(executable);
+            }
+            Permissions permissions = fso.getPermissions();
+            User user = fso.getUser();
+            Group group = fso.getGroup();
+            List<Group> groups = identity.getGroups();
+            if ( permissions == null || user == null || group == null) {
+                throw new InsufficientPermissionsException(executable);
+            }
+            // Check others
+            if (permissions.getOthers().isExecute()) {
+                return;
+            }
+            // Check user
+            if (user.getId() == identity.getUser().getId() && permissions.getUser().isExecute()) {
+                return;
+            }
+            // Check group
+            if (group.getId() == identity.getGroup().getId() && permissions.getGroup().isExecute()) {
+                return;
+            }
+            // Check groups
+            int cc = groups.size();
+            for (int i = 0; i < cc; i++) {
+                Group g = groups.get(i);
+                if (group.getId() == g.getId() && permissions.getGroup().isExecute()) {
+                    return;
+                }
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to check fso execute permission,", e); //$NON-NLS-1$
+        }
+        throw new InsufficientPermissionsException(executable);
+    }
+
+    /**
+     * Method that formats a filetime date with the specific system settings
+     *
+     * @param ctx The current context
+     * @param filetime The filetime date
+     * @return String The filetime date formatted
+     */
+    public static String formatFileTime(Context ctx, Date filetime) {
+        synchronized (DATETIME_SYNC) {
+            if (sReloadDateTimeFormats) {
+                String defaultValue =
+                        ((ObjectStringIdentifier)FileManagerSettings.
+                                    SETTINGS_FILETIME_FORMAT_MODE.getDefaultValue()).getId();
+                String id = FileManagerSettings.SETTINGS_FILETIME_FORMAT_MODE.getId();
+                sFiletimeFormatMode =
+                        FileTimeFormatMode.fromId(
+                                Preferences.getSharedPreferences().getString(id, defaultValue));
+                if (sFiletimeFormatMode.compareTo(FileTimeFormatMode.SYSTEM) == 0) {
+                    sDateTimeFormatOrder = ctx.getString(R.string.datetime_format_order);
+                    sDateFormat = android.text.format.DateFormat.getDateFormat(ctx);
+                    sTimeFormat = android.text.format.DateFormat.getTimeFormat(ctx);
+                } else if (sFiletimeFormatMode.compareTo(FileTimeFormatMode.LOCALE) == 0) {
+                    sDateFormat =
+                            DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT);
+                } else {
+                    sDateFormat = new SimpleDateFormat(sFiletimeFormatMode.getFormat());
+                }
+                sReloadDateTimeFormats = false;
+            }
+        }
+
+        // Apply the user settings
+        if (sFiletimeFormatMode.compareTo(FileTimeFormatMode.SYSTEM) == 0) {
+            String date = sDateFormat.format(filetime);
+            String time = sTimeFormat.format(filetime);
+            return String.format(sDateTimeFormatOrder, date, time);
+        } else {
+            return sDateFormat.format(filetime);
+        }
     }
 }

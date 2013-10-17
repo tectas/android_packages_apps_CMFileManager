@@ -80,6 +80,7 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
         Float mRelevance;
     }
 
+    private static final int MESSAGE_REDRAW = 1;
 
     private DataHolder[] mData;
     private IconHolder mIconHolder;
@@ -89,6 +90,8 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
     private final boolean mShowRelevanceWidget;
 
     private final List<String> mQueries;
+
+    private boolean mDisposed;
 
     //The resource of the item icon
     private static final int RESOURCE_ITEM_ICON = R.id.search_item_icon;
@@ -111,7 +114,11 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
     public SearchResultAdapter(
             Context context, List<SearchResult> files, int itemViewResourceId, Query queries) {
         super(context, RESOURCE_ITEM_NAME, files);
-        this.mIconHolder = new IconHolder();
+        this.mDisposed = false;
+        final boolean displayThumbs = Preferences.getSharedPreferences().getBoolean(
+                FileManagerSettings.SETTINGS_DISPLAY_THUMBS.getId(),
+                ((Boolean)FileManagerSettings.SETTINGS_DISPLAY_THUMBS.getDefaultValue()).booleanValue());
+        this.mIconHolder = new IconHolder(context, displayThumbs);
         this.mItemViewResourceId = itemViewResourceId;
         this.mQueries = queries.getQueries();
 
@@ -134,8 +141,8 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
      * Method that loads the default icons (known icons and more common icons).
      */
     private void loadDefaultIcons() {
-        this.mIconHolder.getDrawable(getContext(), "ic_fso_folder_drawable"); //$NON-NLS-1$
-        this.mIconHolder.getDrawable(getContext(), "ic_fso_default_drawable"); //$NON-NLS-1$
+        this.mIconHolder.getDrawable("ic_fso_folder_drawable"); //$NON-NLS-1$
+        this.mIconHolder.getDrawable("ic_fso_default_drawable"); //$NON-NLS-1$
     }
 
     /**
@@ -143,6 +150,9 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
      */
     @Override
     public void notifyDataSetChanged() {
+        if (this.mDisposed) {
+            return;
+        }
         processData();
         super.notifyDataSetChanged();
     }
@@ -151,6 +161,10 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
      * Method that dispose the elements of the adapter.
      */
     public void dispose() {
+        if (this.mIconHolder != null) {
+            this.mIconHolder.cleanup();
+        }
+        this.mDisposed = true;
         clear();
         this.mData = null;
         this.mIconHolder = null;
@@ -171,10 +185,10 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
             SearchResult result = getItem(i);
 
             //Build the data holder
+            final FileSystemObject fso = result.getFso();
             this.mData[i] = new SearchResultAdapter.DataHolder();
-            this.mData[i].mDwIcon =
-                    this.mIconHolder.getDrawable(
-                            getContext(), MimeTypeHelper.getIcon(getContext(), result.getFso()));
+            this.mData[i].mDwIcon = this.mIconHolder.getDrawable(
+                    MimeTypeHelper.getIcon(getContext(), fso));
             if (this.mHighlightTerms) {
                 this.mData[i].mName =
                         SearchHelper.getHighlightedName(result, this.mQueries, highlightedColor);
@@ -262,7 +276,13 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
         ViewHolder viewHolder = (ViewHolder)v.getTag();
 
         //Set the data
-        viewHolder.mIvIcon.setImageDrawable(dataHolder.mDwIcon);
+
+        if (convertView != null) {
+            mIconHolder.cancelLoad(viewHolder.mIvIcon);
+        }
+        mIconHolder.loadDrawable(viewHolder.mIvIcon,
+                getItem(position).getFso(), dataHolder.mDwIcon);
+
         viewHolder.mTvName.setText(dataHolder.mName, TextView.BufferType.SPANNABLE);
         viewHolder.mTvParentDir.setText(dataHolder.mParentDir);
         if (dataHolder.mRelevance != null) {

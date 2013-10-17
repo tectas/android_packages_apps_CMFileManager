@@ -200,11 +200,7 @@ public class ShortcutActivity extends Activity implements OnCancelListener, OnDi
      */
     private boolean initializeConsole() {
         try {
-            // Is there a console allocate
-            if (!ConsoleBuilder.isAlloc()) {
-                // Create a console
-                ConsoleBuilder.getConsole(this);
-            }
+            ConsoleBuilder.getConsole(this);
             // There is a console allocated. Use it.
             return true;
         } catch (Throwable _throw) {
@@ -238,7 +234,7 @@ public class ShortcutActivity extends Activity implements OnCancelListener, OnDi
      */
     void applyTheme() {
         Theme theme = ThemeManager.getCurrentTheme(this);
-        theme.setBaseTheme(this, false);
+        theme.setBaseTheme(this, true);
     }
 
 }

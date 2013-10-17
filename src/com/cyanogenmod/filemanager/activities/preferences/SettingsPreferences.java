@@ -18,6 +18,7 @@ package com.cyanogenmod.filemanager.activities.preferences;
 
 import android.app.ActionBar;
 import android.app.Activity;
+import android.app.Fragment;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -48,7 +49,7 @@ import com.cyanogenmod.filemanager.preferences.Preferences;
 import com.cyanogenmod.filemanager.providers.RecentSearchesContentProvider;
 import com.cyanogenmod.filemanager.ui.ThemeManager;
 import com.cyanogenmod.filemanager.ui.ThemeManager.Theme;
-import com.cyanogenmod.filemanager.ui.preferences.ThemeSelectorPreference;
+import com.cyanogenmod.filemanager.util.AndroidHelper;
 import com.cyanogenmod.filemanager.util.DialogHelper;
 
 import java.util.List;
@@ -61,6 +62,8 @@ public class SettingsPreferences extends PreferenceActivity {
     private static final String TAG = "SettingsPreferences"; //$NON-NLS-1$
 
     private static final boolean DEBUG = false;
+
+    private TextView mTitle;
 
     private final BroadcastReceiver mNotificationReceiver = new BroadcastReceiver() {
         @Override
@@ -127,9 +130,9 @@ public class SettingsPreferences extends PreferenceActivity {
                 ActionBar.DISPLAY_SHOW_CUSTOM | ActionBar.DISPLAY_SHOW_HOME);
         getActionBar().setDisplayHomeAsUpEnabled(true);
         View customTitle = getLayoutInflater().inflate(R.layout.simple_customtitle, null, false);
-        TextView title = (TextView)customTitle.findViewById(R.id.customtitle_title);
-        title.setText(R.string.pref);
-        title.setContentDescription(getString(R.string.pref));
+        this.mTitle = (TextView)customTitle.findViewById(R.id.customtitle_title);
+        this.mTitle.setText(R.string.pref);
+        this.mTitle.setContentDescription(getString(R.string.pref));
         getActionBar().setCustomView(customTitle);
     }
 
@@ -471,56 +474,15 @@ public class SettingsPreferences extends PreferenceActivity {
 
     /**
      * A class that manages the theme selection
+
      */
-    public static class ThemesPreferenceFragment extends PreferenceFragment {
-
-        private ThemeSelectorPreference mThemeSelector;
-
-        private final OnPreferenceChangeListener mOnChangeListener =
-                new OnPreferenceChangeListener() {
-            @Override
-            public boolean onPreferenceChange(Preference preference, Object newValue) {
-                String key = preference.getKey();
-                if (DEBUG) {
-                    Log.d(TAG,
-                        String.format("New value for %s: %s",  //$NON-NLS-1$
-                                key,
-                                String.valueOf(newValue)));
-                }
-
-                // Notify to all activities that the theme has changed
-                Intent intent = new Intent(FileManagerSettings.INTENT_THEME_CHANGED);
-                intent.putExtra(FileManagerSettings.EXTRA_THEME_ID, (String)newValue);
-                getActivity().sendBroadcast(intent);
-
-                //Wait for allow activities to apply the theme, prior to finish settings
-                try {
-                    Thread.sleep(250L);
-                } catch (Throwable e) {/**NON BLOCK**/}
-                getActivity().finish();
-                return true;
-            }
-        };
-
-        /**
-         * {@inheritDoc}
-         */
-        @Override
-        public void onCreate(Bundle savedInstanceState) {
-            super.onCreate(savedInstanceState);
-
-            // Change the preference manager
-            getPreferenceManager().setSharedPreferencesName(Preferences.SETTINGS_FILENAME);
-            getPreferenceManager().setSharedPreferencesMode(MODE_PRIVATE);
-
-            // Add the preferences
-            addPreferencesFromResource(R.xml.preferences_themes);
-
-            // Theme selector
-            this.mThemeSelector =
-                    (ThemeSelectorPreference)findPreference(
-                            FileManagerSettings.SETTINGS_THEME.getId());
-            this.mThemeSelector.setOnPreferenceChangeListener(this.mOnChangeListener);
+    @Override
+    public void onAttachFragment(Fragment fragment) {
+        super.onAttachFragment(fragment);
+        if (!AndroidHelper.isTablet(this) && fragment instanceof TitlePreferenceFragment) {
+            this.mTitle.setText(((TitlePreferenceFragment)fragment).getTitle());
+        } else {
+            this.mTitle.setText(R.string.pref);
         }
     }
 

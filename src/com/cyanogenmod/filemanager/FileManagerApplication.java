@@ -35,11 +35,13 @@ import com.cyanogenmod.filemanager.preferences.ObjectStringIdentifier;
 import com.cyanogenmod.filemanager.preferences.Preferences;
 import com.cyanogenmod.filemanager.ui.ThemeManager;
 import com.cyanogenmod.filemanager.ui.ThemeManager.Theme;
-import com.cyanogenmod.filemanager.util.FileHelper;
+import com.cyanogenmod.filemanager.util.AIDHelper;
 import com.cyanogenmod.filemanager.util.MimeTypeHelper;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 
 /**
@@ -53,6 +55,8 @@ public final class FileManagerApplication extends Application {
 
     private static boolean DEBUG = false;
     private static Properties sSystemProperties;
+
+    private static Map<String, Boolean> sOptionalCommandsMap;
 
     /**
      * A constant that contains the main process name.
@@ -100,7 +104,7 @@ public final class FileManagerApplication extends Application {
         }
     };
 
-    // A broadcast receiver for detect the uninstall of apk with themes
+    // A broadcast receiver for detect the install/uninstall of apps (for themes, AIDs, ...)
     private final BroadcastReceiver mUninstallReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -109,34 +113,46 @@ public final class FileManagerApplication extends Application {
                     intent.getAction().compareTo(Intent.ACTION_PACKAGE_FULLY_REMOVED) == 0) {
                     // Check that the remove package is not the current theme
                     if (intent.getData() != null) {
-                        // Get the package name and remove the schema
-                        String apkPackage = intent.getData().toString();
-                        apkPackage = apkPackage.substring("package:".length()); //$NON-NLS-1$
+                        // --- AIDs
+                        try {
+                            AIDHelper.getAIDs(getApplicationContext(), true);
+                        } catch (Exception e) {
+                            Log.w(TAG, "Failed to reload AIDs", e); //$NON-NLS-1$
+                        }
 
-                        Theme currentTheme = ThemeManager.getCurrentTheme(context);
-                        if (currentTheme.getPackage().compareTo(apkPackage) == 0) {
-                            // The apk that contains the current theme was remove, change
-                            // to default theme
-                            String composedId =
+                        // --- Themes
+                        try {
+                            // Get the package name and remove the schema
+                            String apkPackage = intent.getData().toString();
+                            apkPackage = apkPackage.substring("package:".length()); //$NON-NLS-1$
+
+                            Theme currentTheme = ThemeManager.getCurrentTheme(context);
+                            if (currentTheme.getPackage().compareTo(apkPackage) == 0) {
+                                // The apk that contains the current theme was remove, change
+                                // to default theme
+                                String composedId =
                                     (String)FileManagerSettings.SETTINGS_THEME.getDefaultValue();
-                            ThemeManager.setCurrentTheme(getApplicationContext(), composedId);
-                            try {
-                                Preferences.savePreference(
-                                        FileManagerSettings.SETTINGS_THEME, composedId, true);
-                            } catch (Throwable ex) {
-                                Log.w(TAG, "can't save theme preference", ex); //$NON-NLS-1$
-                            }
+                                ThemeManager.setCurrentTheme(getApplicationContext(), composedId);
+                                try {
+                                    Preferences.savePreference(
+                                            FileManagerSettings.SETTINGS_THEME, composedId, true);
+                                } catch (Throwable ex) {
+                                    Log.w(TAG, "can't save theme preference", ex); //$NON-NLS-1$
+                                }
 
-                            // Notify the changes to activities
-                            try {
-                                Intent broadcastIntent =
-                                        new Intent(FileManagerSettings.INTENT_THEME_CHANGED);
-                                broadcastIntent.putExtra(
-                                        FileManagerSettings.EXTRA_THEME_ID, composedId);
-                                sendBroadcast(broadcastIntent);
-                            } catch (Throwable ex) {
-                                Log.w(TAG, "notify of theme change failed", ex); //$NON-NLS-1$
+                                // Notify the changes to activities
+                                try {
+                                    Intent broadcastIntent =
+                                            new Intent(FileManagerSettings.INTENT_THEME_CHANGED);
+                                    broadcastIntent.putExtra(
+                                            FileManagerSettings.EXTRA_THEME_ID, composedId);
+                                    sendBroadcast(broadcastIntent);
+                                } catch (Throwable ex) {
+                                    Log.w(TAG, "notify of theme change failed", ex); //$NON-NLS-1$
+                                }
                             }
+                        } catch (Exception e) {
+                            Log.w(TAG, "Failed to reload themes", e); //$NON-NLS-1$
                         }
                     }
                 }
@@ -153,8 +169,8 @@ public final class FileManagerApplication extends Application {
         if (DEBUG) {
             Log.d(TAG, "FileManagerApplication.onCreate"); //$NON-NLS-1$
         }
-        register();
         init();
+        register();
     }
 
     /**
@@ -192,21 +208,6 @@ public final class FileManagerApplication extends Application {
      * Method that register the application context.
      */
     private void register() {
-        //Save the static application reference
-        sApp = this;
-
-        // Read the system properties
-        sSystemProperties = new Properties();
-        readSystemProperties();
-
-        // Check if the application is debuggable
-        sIsDebuggable = (0 != (getApplicationInfo().flags &= ApplicationInfo.FLAG_DEBUGGABLE));
-
-        // Check if the device is rooted
-        sIsDeviceRooted =
-                new File(getString(R.string.su_binary)).exists() &&
-                getSystemProperty("ro.cm.version") != null; //$NON-NLS-1$
-
         // Register the notify broadcast receiver
         IntentFilter filter = new IntentFilter();
         filter.addAction(FileManagerSettings.INTENT_SETTING_CHANGED);
@@ -224,9 +225,27 @@ public final class FileManagerApplication extends Application {
      * Method that initializes the application.
      */
     private void init() {
+        //Save the static application reference
+        sApp = this;
+
+        // Read the system properties
+        sSystemProperties = new Properties();
+        readSystemProperties();
+
+        // Check if the application is debuggable
+        sIsDebuggable = (0 != (getApplicationInfo().flags &= ApplicationInfo.FLAG_DEBUGGABLE));
+
+        // Check if the device is rooted
+        sIsDeviceRooted = areShellCommandsPresent();
+
+        // Check optional commands
+        loadOptionalCommands();
+
         //Sets the default preferences if no value is set yet
-        FileHelper.ROOT_DIRECTORY = getString(R.string.root_dir);
         Preferences.loadDefaults();
+
+        // Read AIDs
+        AIDHelper.getAIDs(getApplicationContext(), true);
 
         // Allocate the default and current themes
         String defaultValue = ((String)FileManagerSettings.
@@ -245,6 +264,9 @@ public final class FileManagerApplication extends Application {
                 Log.w(TAG, "can't save theme preference", ex); //$NON-NLS-1$
             }
         }
+        // Set the base theme
+        Theme theme = ThemeManager.getCurrentTheme(getApplicationContext());
+        theme.setBaseTheme(getApplicationContext(), false);
 
         //Create a console for background tasks
         allocBackgroundConsole(getApplicationContext());
@@ -283,6 +305,19 @@ public final class FileManagerApplication extends Application {
      */
     public static boolean isDeviceRooted() {
         return sIsDeviceRooted;
+    }
+
+    /**
+     * Method that returns if a command is present in the system
+     *
+     * @param commandId The command key
+     * @return boolean If the command is present
+     */
+    public static boolean hasOptionalCommand(String commandId) {
+        if (!sOptionalCommandsMap.containsKey(commandId)) {
+            return false;
+        }
+        return sOptionalCommandsMap.get(commandId).booleanValue();
     }
 
     /**
@@ -338,13 +373,11 @@ public final class FileManagerApplication extends Application {
             if (ConsoleBuilder.isPrivileged()) {
                 sBackgroundConsole =
                         new ConsoleHolder(
-                                ConsoleBuilder.createPrivilegedConsole(
-                                        ctx, FileHelper.ROOT_DIRECTORY));
+                                ConsoleBuilder.createPrivilegedConsole(ctx));
             } else {
                 sBackgroundConsole =
                         new ConsoleHolder(
-                                ConsoleBuilder.createNonPrivilegedConsole(
-                                        ctx, FileHelper.ROOT_DIRECTORY));
+                                ConsoleBuilder.createNonPrivilegedConsole(ctx));
             }
         } catch (Exception e) {
             Log.e(TAG,
@@ -373,8 +406,7 @@ public final class FileManagerApplication extends Application {
                 sBackgroundConsole =
                         new ConsoleHolder(
                                 ConsoleBuilder.createPrivilegedConsole(
-                                        getInstance().getApplicationContext(),
-                                        FileHelper.ROOT_DIRECTORY));
+                                        getInstance().getApplicationContext()));
             } catch (Exception e) {
                 try {
                     if (sBackgroundConsole != null) {
@@ -394,6 +426,9 @@ public final class FileManagerApplication extends Application {
      * @return boolean If the access mode of the application
      */
     public static AccessMode getAccessMode() {
+        if (!sIsDeviceRooted) {
+            return AccessMode.SAFE;
+        }
         String defaultValue =
                 ((ObjectStringIdentifier)FileManagerSettings.
                             SETTINGS_ACCESS_MODE.getDefaultValue()).getId();
@@ -419,4 +454,74 @@ public final class FileManagerApplication extends Application {
         }
     }
 
+    /**
+     * Method that check if all shell commands are present in the device
+     *
+     * @return boolean Check if the device has all of the shell commands
+     */
+    private boolean areShellCommandsPresent() {
+        try {
+            String shellCommands = getString(R.string.shell_required_commands);
+            String[] commands = shellCommands.split(","); //$NON-NLS-1$
+            int cc = commands.length;
+            if (cc == 0) {
+                //???
+                Log.w(TAG, "No shell commands."); //$NON-NLS-1$
+                return false;
+            }
+            for (int i = 0; i < cc; i++) {
+                String c = commands[i].trim();
+                if (c.length() == 0) continue;
+                File cmd = new File(c);
+                if (!cmd.exists() || !cmd.isFile()) {
+                    Log.w(TAG,
+                            String.format(
+                                    "Command %s not found. Exists: %s; IsFile: %s.", //$NON-NLS-1$
+                                    c,
+                                    String.valueOf(cmd.exists()),
+                                    String.valueOf(cmd.isFile())));
+                    return false;
+                }
+            }
+            // All commands are present
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG,
+                    "Failed to read shell commands.", e); //$NON-NLS-1$
+        }
+        return false;
+    }
+
+    @SuppressWarnings("boxing")
+    private void loadOptionalCommands() {
+        try {
+            sOptionalCommandsMap = new HashMap<String, Boolean>();
+
+            String shellCommands = getString(R.string.shell_optional_commands);
+            String[] commands = shellCommands.split(","); //$NON-NLS-1$
+            int cc = commands.length;
+            if (cc == 0) {
+                Log.w(TAG, "No optional commands."); //$NON-NLS-1$
+                return;
+            }
+            for (int i = 0; i < cc; i++) {
+                String c = commands[i].trim();
+                String key = c.substring(0, c.indexOf("=")).trim(); //$NON-NLS-1$
+                c = c.substring(c.indexOf("=")+1).trim(); //$NON-NLS-1$
+                if (c.length() == 0) continue;
+                File cmd = new File(c);
+                Boolean found = Boolean.valueOf(cmd.exists() && cmd.isFile());
+                sOptionalCommandsMap.put(key, found);
+                if (DEBUG) {
+                    Log.w(TAG,
+                            String.format(
+                                    "Optional command %s %s.", //$NON-NLS-1$
+                                    c, found ? "found" : "not found")); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG,
+                    "Failed to read optional shell commands.", e); //$NON-NLS-1$
+        }
+    }
 }

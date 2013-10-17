@@ -26,8 +26,18 @@
       <CheckBoxPreference
         android:key="cm_filemanager_case_sensitive_sort"
         android:title="@string/pref_case_sensitive_sort"
+        android:summary="@string/pref_case_sensitive_sort_summary"
         android:persistent="true"
         android:defaultValue="false" />
+
+      <!-- Filetime format -->
+      <ListPreference
+        android:key="cm_filemanager_filetime_format_mode"
+        android:title="@string/pref_filetime_format_mode"
+        android:entries="@array/filetime_format_mode_labels"
+        android:entryValues="@array/filetime_format_mode_values"
+        android:defaultValue="1"
+        android:persistent="true" />
 
       <!-- Disk usage warning level -->
       <ListPreference
@@ -43,6 +53,14 @@
         android:key="cm_filemanager_compute_folder_statistics"
         android:title="@string/pref_compute_folder_statistics"
         android:summaryOn="@string/pref_compute_folder_statistics_on"
+        android:persistent="true"
+        android:defaultValue="false" />
+
+      <!-- Thumbs -->
+      <CheckBoxPreference
+        android:key="cm_filemanager_show_thumbs"
+        android:title="@string/pref_display_thumbs"
+        android:summary="@string/pref_display_thumbs_summary"
         android:persistent="true"
         android:defaultValue="false" />
 

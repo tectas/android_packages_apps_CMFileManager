@@ -26,7 +26,7 @@ import com.cyanogenmod.filemanager.R;
 import java.io.File;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
-
+import java.util.Locale;
 
 /**
  * A helper class with useful methods for deal with storages.
@@ -60,7 +60,7 @@ public final class StorageHelper {
                     File externalStorage = Environment.getExternalStorageDirectory();
                     String path = externalStorage.getCanonicalPath();
                     String description = null;
-                    if (path.toLowerCase().indexOf("usb") != -1) { //$NON-NLS-1$
+                    if (path.toLowerCase(Locale.ROOT).indexOf("usb") != -1) { //$NON-NLS-1$
                         description = ctx.getString(R.string.usb_storage);
                     } else {
                         description = ctx.getString(R.string.external_storage);
@@ -127,12 +127,13 @@ public final class StorageHelper {
      * @return boolean If the path is in a volume storage
      */
     public static boolean isPathInStorageVolume(String path) {
+        String fso = FileHelper.getAbsPath(path);
         StorageVolume[] volumes =
                 getStorageVolumes(FileManagerApplication.getInstance().getApplicationContext());
         int cc = volumes.length;
         for (int i = 0; i < cc; i++) {
             StorageVolume vol = volumes[i];
-            if (path.startsWith(vol.getPath())) {
+            if (fso.startsWith(vol.getPath())) {
                 return true;
             }
         }

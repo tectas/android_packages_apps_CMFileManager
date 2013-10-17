@@ -57,6 +57,7 @@ import com.cyanogenmod.filemanager.adapters.SimpleMenuListAdapter;
 import com.cyanogenmod.filemanager.console.Console;
 import com.cyanogenmod.filemanager.console.ConsoleAllocException;
 import com.cyanogenmod.filemanager.console.ConsoleBuilder;
+import com.cyanogenmod.filemanager.console.InsufficientPermissionsException;
 import com.cyanogenmod.filemanager.console.NoSuchFileOrDirectory;
 import com.cyanogenmod.filemanager.listeners.OnHistoryListener;
 import com.cyanogenmod.filemanager.listeners.OnRequestRefreshListener;
@@ -88,6 +89,7 @@ import com.cyanogenmod.filemanager.util.AndroidHelper;
 import com.cyanogenmod.filemanager.util.CommandHelper;
 import com.cyanogenmod.filemanager.util.DialogHelper;
 import com.cyanogenmod.filemanager.util.ExceptionUtil;
+import com.cyanogenmod.filemanager.util.ExceptionUtil.OnRelaunchCommandResult;
 import com.cyanogenmod.filemanager.util.FileHelper;
 import com.cyanogenmod.filemanager.util.StorageHelper;
 
@@ -205,6 +207,14 @@ public class NavigationActivity extends Activity
                             return;
                         }
 
+                        // Display thumbs
+                        if (key.compareTo(FileManagerSettings.
+                                SETTINGS_DISPLAY_THUMBS.getId()) == 0) {
+                            // Clean the icon cache applying the current theme
+                            applyTheme();
+                            return;
+                        }
+
                         // Use flinger
                         if (key.compareTo(FileManagerSettings.
                                 SETTINGS_USE_FLINGER.getId()) == 0) {
@@ -233,6 +243,16 @@ public class NavigationActivity extends Activity
                                 }
                             }
                         }
+
+                        // Filetime format mode
+                        if (key.compareTo(FileManagerSettings.
+                                SETTINGS_FILETIME_FORMAT_MODE.getId()) == 0) {
+                            // Refresh the data
+                            synchronized (FileHelper.DATETIME_SYNC) {
+                                FileHelper.sReloadDateTimeFormats = true;
+                                NavigationActivity.this.getCurrentNavigationView().refresh();
+                            }
+                        }
                     }
 
                 } else if (intent.getAction().compareTo(
@@ -248,9 +268,19 @@ public class NavigationActivity extends Activity
                     } catch (Exception e) {
                         ExceptionUtil.translateException(context, e, true, false);
                     }
+
                 } else if (intent.getAction().compareTo(
                         FileManagerSettings.INTENT_THEME_CHANGED) == 0) {
                     applyTheme();
+
+                } else if (intent.getAction().compareTo(Intent.ACTION_TIME_CHANGED) == 0 ||
+                           intent.getAction().compareTo(Intent.ACTION_DATE_CHANGED) == 0 ||
+                           intent.getAction().compareTo(Intent.ACTION_TIMEZONE_CHANGED) == 0) {
+                    // Refresh the data
+                    synchronized (FileHelper.DATETIME_SYNC) {
+                        FileHelper.sReloadDateTimeFormats = true;
+                        NavigationActivity.this.getCurrentNavigationView().refresh();
+                    }
                 }
             }
         }
@@ -299,6 +329,9 @@ public class NavigationActivity extends Activity
         filter.addAction(FileManagerSettings.INTENT_SETTING_CHANGED);
         filter.addAction(FileManagerSettings.INTENT_FILE_CHANGED);
         filter.addAction(FileManagerSettings.INTENT_THEME_CHANGED);
+        filter.addAction(Intent.ACTION_DATE_CHANGED);
+        filter.addAction(Intent.ACTION_TIME_CHANGED);
+        filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
         registerReceiver(this.mNotificationReceiver, filter);
 
         //Set the main layout of the activity
@@ -357,10 +390,13 @@ public class NavigationActivity extends Activity
         this.mHandler.post(new Runnable() {
             @Override
             public void run() {
+                // Initialize console
+                initConsole();
+
                 //Initialize navigation
                 int cc = NavigationActivity.this.mNavigationViews.length;
                 for (int i = 0; i < cc; i++) {
-                    initNavigation(i, false);
+                    initNavigation(i, false, getIntent());
                 }
 
                 //Check the intent action
@@ -378,7 +414,7 @@ public class NavigationActivity extends Activity
     @Override
     protected void onNewIntent(Intent intent) {
         //Initialize navigation
-        initNavigation(this.mCurrentNavigationView, true);
+        initNavigation(this.mCurrentNavigationView, true, intent);
 
         //Check the intent action
         checkIntent(intent);
@@ -561,86 +597,163 @@ public class NavigationActivity extends Activity
     }
 
     /**
+     * Method that initialize the console
+     * @hide
+     */
+    void initConsole() {
+        //Create the default console (from the preferences)
+        try {
+            Console console = ConsoleBuilder.getConsole(NavigationActivity.this);
+            if (console == null) {
+                throw new ConsoleAllocException("console == null"); //$NON-NLS-1$
+            }
+        } catch (Throwable ex) {
+            if (!NavigationActivity.this.mChRooted) {
+                //Show exception and exit
+                Log.e(TAG, getString(R.string.msgs_cant_create_console), ex);
+                // We don't have any console
+                // Show exception and exit
+                DialogHelper.showToast(
+                        NavigationActivity.this,
+                        R.string.msgs_cant_create_console, Toast.LENGTH_LONG);
+                exit();
+                return;
+            }
+
+            // We are in a trouble (something is not allowing creating the console)
+            // Ask the user to return to prompt or root access mode mode with a
+            // non-privileged console, prior to make crash the application
+            askOrExit();
+            return;
+        }
+    }
+
+    /**
      * Method that initializes the navigation.
      *
      * @param viewId The navigation view identifier where apply the navigation
      * @param restore Initialize from a restore info
+     * @param intent The current intent
      * @hide
      */
-    void initNavigation(final int viewId, final boolean restore) {
+    void initNavigation(final int viewId, final boolean restore, final Intent intent) {
         final NavigationView navigationView = getNavigationView(viewId);
         this.mHandler.post(new Runnable() {
             @Override
             public void run() {
-                //Create the default console (from the preferences)
-                try {
-                    Console console = ConsoleBuilder.getConsole(NavigationActivity.this);
-                    if (console == null) {
-                        throw new ConsoleAllocException("console == null"); //$NON-NLS-1$
-                    }
-                } catch (Throwable ex) {
-                    if (!NavigationActivity.this.mChRooted) {
-                        //Show exception and exists
-                        Log.e(TAG, getString(R.string.msgs_cant_create_console), ex);
-                        // We don't have any console
-                        // Show exception and exists
-                        DialogHelper.showToast(
-                                NavigationActivity.this,
-                                R.string.msgs_cant_create_console, Toast.LENGTH_LONG);
-                        exit();
-                        return;
-                    }
-
-                    // We are in a trouble (something is not allowing creating the console)
-                    // Ask the user to return to prompt or root access mode mode with a
-                    // non-privileged console, prior to make crash the application
-                    askOrExit();
-                    return;
-                }
-
                 //Is necessary navigate?
                 if (!restore) {
-                    //Load the preference initial directory
-                    String initialDir =
-                            Preferences.getSharedPreferences().getString(
-                                FileManagerSettings.SETTINGS_INITIAL_DIR.getId(),
-                                (String)FileManagerSettings.
-                                    SETTINGS_INITIAL_DIR.getDefaultValue());
-                    if (NavigationActivity.this.mChRooted) {
-                        // Initial directory is the first external sdcard (sdcard, emmc, usb, ...)
-                        StorageVolume[] volumes =
-                                StorageHelper.getStorageVolumes(NavigationActivity.this);
-                        if (volumes != null && volumes.length > 0) {
-                            initialDir = volumes[0].getPath();
-                        }
-                    }
-
-                    //Ensure initial is an absolute directory
-                    try {
-                        initialDir =
-                                CommandHelper.getAbsolutePath(
-                                        NavigationActivity.this, initialDir, null);
-                    } catch (Throwable e) {
-                        Log.e(TAG, "Resolve of initital directory fails", e); //$NON-NLS-1$
-                        String msg =
-                                getString(
-                                        R.string.msgs_settings_invalid_initial_directory,
-                                        initialDir);
-                        DialogHelper.showToast(NavigationActivity.this, msg, Toast.LENGTH_SHORT);
-                        initialDir = FileHelper.ROOT_DIRECTORY;
-                    }
-
-                    // Change the current directory to the preference initial directory or the
-                    // request if exists
-                    String navigateTo = getIntent().getStringExtra(EXTRA_NAVIGATE_TO);
-                    if (navigateTo != null && navigateTo.length() > 0) {
-                        navigationView.changeCurrentDir(navigateTo);
-                    } else {
-                        navigationView.changeCurrentDir(initialDir);
-                    }
+                    applyInitialDir(navigationView, intent);
                 }
             }
         });
+    }
+
+    /**
+     * Method that applies the user-defined initial directory
+     *
+     * @param navigationView The navigation view
+     * @param intent The current intent
+     * @hide
+     */
+    void applyInitialDir(final NavigationView navigationView, final Intent intent) {
+        //Load the user-defined initial directory
+        String initialDir =
+                Preferences.getSharedPreferences().getString(
+                    FileManagerSettings.SETTINGS_INITIAL_DIR.getId(),
+                    (String)FileManagerSettings.
+                        SETTINGS_INITIAL_DIR.getDefaultValue());
+
+        // Check if request navigation to directory (use as default), and
+        // ensure chrooted and absolute path
+        String navigateTo = intent.getStringExtra(EXTRA_NAVIGATE_TO);
+        if (navigateTo != null && navigateTo.length() > 0) {
+            initialDir = navigateTo;
+        }
+
+        if (this.mChRooted) {
+            // Initial directory is the first external sdcard (sdcard, emmc, usb, ...)
+            if (!StorageHelper.isPathInStorageVolume(initialDir)) {
+                StorageVolume[] volumes =
+                        StorageHelper.getStorageVolumes(this);
+                if (volumes != null && volumes.length > 0) {
+                    initialDir = volumes[0].getPath();
+                    //Ensure that initial directory is an absolute directory
+                    initialDir = FileHelper.getAbsPath(initialDir);
+                } else {
+                    // Show exception and exit
+                    DialogHelper.showToast(
+                            this,
+                            R.string.msgs_cant_create_console, Toast.LENGTH_LONG);
+                    exit();
+                    return;
+                }
+            }
+        } else {
+            //Ensure that initial directory is an absolute directory
+            final String userInitialDir = initialDir;
+            initialDir = FileHelper.getAbsPath(initialDir);
+            final String absInitialDir = initialDir;
+            File f = new File(initialDir);
+            boolean exists = f.exists();
+            if (!exists) {
+                // Fix for /data/media/0. Libcore doesn't detect it correctly.
+                try {
+                    exists = CommandHelper.getFileInfo(this, initialDir, false, null) != null;
+                } catch (InsufficientPermissionsException ipex) {
+                    ExceptionUtil.translateException(
+                            this, ipex, false, true, new OnRelaunchCommandResult() {
+                        @Override
+                        public void onSuccess() {
+                            navigationView.changeCurrentDir(absInitialDir);
+                        }
+                        @Override
+                        public void onFailed(Throwable cause) {
+                            showInitialInvalidDirectoryMsg(userInitialDir);
+                            navigationView.changeCurrentDir(FileHelper.ROOT_DIRECTORY);
+                        }
+                        @Override
+                        public void onCancelled() {
+                            showInitialInvalidDirectoryMsg(userInitialDir);
+                            navigationView.changeCurrentDir(FileHelper.ROOT_DIRECTORY);
+                        }
+                    });
+
+                    // Asynchronous mode
+                    return;
+                } catch (Exception ex) {
+                    // We are not interested in other exceptions
+                    ExceptionUtil.translateException(this, ex, true, false);
+                }
+
+                // Check again the initial directory
+                if (!exists) {
+                    showInitialInvalidDirectoryMsg(userInitialDir);
+                    initialDir = FileHelper.ROOT_DIRECTORY;
+                }
+
+                // Weird, but we have a valid initial directory
+            }
+        }
+
+        // Change the current directory to the user-defined initial directory
+        navigationView.changeCurrentDir(initialDir);
+    }
+
+    /**
+     * Displays a message reporting invalid directory
+     *
+     * @param initialDir The initial directory
+     * @hide
+     */
+    void showInitialInvalidDirectoryMsg(String initialDir) {
+        // Change to root directory
+        DialogHelper.showToast(
+                this,
+                getString(
+                        R.string.msgs_settings_invalid_initial_directory,
+                        initialDir),
+                Toast.LENGTH_SHORT);
     }
 
     /**
@@ -679,12 +792,6 @@ public class NavigationActivity extends Activity
             }
             startActivityForResult(searchIntent, INTENT_REQUEST_SEARCH);
             return;
-        }
-
-        // Navigate to the requested path
-        String navigateTo = intent.getStringExtra(EXTRA_NAVIGATE_TO);
-        if (navigateTo != null && navigateTo.length() >= 0) {
-            getCurrentNavigationView().changeCurrentDir(navigateTo);
         }
     }
 
@@ -916,7 +1023,7 @@ public class NavigationActivity extends Activity
      * {@inheritDoc}
      */
     @Override
-    public void onRequestRefresh(Object o) {
+    public void onRequestRefresh(Object o, boolean clearSelection) {
         if (o instanceof FileSystemObject) {
             // Refresh only the item
             this.getCurrentNavigationView().refresh((FileSystemObject)o);
@@ -924,14 +1031,16 @@ public class NavigationActivity extends Activity
             // Refresh all
             getCurrentNavigationView().refresh();
         }
-        this.getCurrentNavigationView().onDeselectAll();
+        if (clearSelection) {
+            this.getCurrentNavigationView().onDeselectAll();
+        }
     }
 
     /**
      * {@inheritDoc}
      */
     @Override
-    public void onRequestRemove(Object o) {
+    public void onRequestRemove(Object o, boolean clearSelection) {
         if (o instanceof FileSystemObject) {
             // Remove from view
             this.getCurrentNavigationView().removeItem((FileSystemObject)o);
@@ -939,9 +1048,11 @@ public class NavigationActivity extends Activity
             //Remove from history
             removeFromHistory((FileSystemObject)o);
         } else {
-            onRequestRefresh(null);
+            onRequestRefresh(null, clearSelection);
         }
-        this.getCurrentNavigationView().onDeselectAll();
+        if (clearSelection) {
+            this.getCurrentNavigationView().onDeselectAll();
+        }
     }
 
     /**
@@ -1187,7 +1298,6 @@ public class NavigationActivity extends Activity
         bundle.putString(
                 SearchActivity.EXTRA_SEARCH_DIRECTORY,
                 getCurrentNavigationView().getCurrentDir());
-        // TODO VoiceSearch icon is not shown. This must be a bug of CM. Verify with a test app.
         startSearch(Preferences.getLastSearch(), true, bundle, false);
         return true;
     }
@@ -1206,7 +1316,7 @@ public class NavigationActivity extends Activity
      * @param history The history reference
      * @return boolean A problem occurs while navigate
      */
-    public boolean navigateToHistory(History history) {
+    public synchronized boolean navigateToHistory(History history) {
         try {
             //Gets the history
             History realHistory = this.mHistory.get(history.getPosition());
@@ -1218,7 +1328,11 @@ public class NavigationActivity extends Activity
                         (NavigationViewInfoParcelable)realHistory.getItem();
                 int viewId = info.getId();
                 NavigationView view = getNavigationView(viewId);
-                view.onRestoreState(info);
+                // Selected items must not be restored from on history navigation
+                info.setSelectedFiles(view.getSelectedFiles());
+                if (!view.onRestoreState(info)) {
+                    return true;
+                }
 
             } else if (realHistory.getItem() instanceof SearchInfoParcelable) {
                 //Search (open search with the search results)
@@ -1417,7 +1531,7 @@ public class NavigationActivity extends Activity
                     public void onClick(DialogInterface alertDialog, int which) {
                         if (which == DialogInterface.BUTTON_NEGATIVE) {
                             // We don't have any console
-                            // Show exception and exists
+                            // Show exception and exit
                             DialogHelper.showToast(
                                     NavigationActivity.this,
                                     R.string.msgs_cant_create_console, Toast.LENGTH_LONG);
@@ -1494,6 +1608,11 @@ public class NavigationActivity extends Activity
      * @hide
      */
     void exit() {
+        // Recycle the navigation views
+        int cc = this.mNavigationViews.length;
+        for (int i = 0; i < cc; i++) {
+            this.mNavigationViews[i].recycle();
+        }
         try {
             FileManagerApplication.destroyBackgroundConsole();
         } catch (Throwable ex) {
@@ -1594,10 +1713,13 @@ public class NavigationActivity extends Activity
         Theme theme = ThemeManager.getCurrentTheme(this);
         theme.setBaseTheme(this, false);
 
+        //- Layout
+        View v = findViewById(R.id.navigation_layout);
+        theme.setBackgroundDrawable(this, v, "background_drawable"); //$NON-NLS-1$
         //- ActionBar
         theme.setTitlebarDrawable(this, getActionBar(), "titlebar_drawable"); //$NON-NLS-1$
         //- StatusBar
-        View v = findViewById(R.id.navigation_statusbar);
+        v = findViewById(R.id.navigation_statusbar);
         if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
             theme.setBackgroundDrawable(this, v, "titlebar_drawable"); //$NON-NLS-1$
         } else {
